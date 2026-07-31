@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "noEmit": true,
+    // F-010: test/*.test.ts imports "../src/index.ts" with an explicit
+    // extension (matching packages/core and packages/node's test-file
+    // convention) — required whenever any import specifier in the program
+    // uses a literal .ts extension. src/ itself has no extension-suffixed
+    // imports, so this was never needed before the test/ dir existed.
+    "allowImportingTsExtensions": true
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts", "tsup.config.ts"]
+}

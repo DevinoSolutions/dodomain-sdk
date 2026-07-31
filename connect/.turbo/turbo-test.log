@@ -1,0 +1,4 @@
+
+> @dodomain/connect@0.1.0-pre.1 test C:\Users\alaed\Documents\Github\dodomain\packages\connect
+> node --experimental-strip-types --test test/*.test.ts
+

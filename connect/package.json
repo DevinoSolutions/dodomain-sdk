@@ -1,0 +1,60 @@
+{
+  "name": "@dodomain/connect",
+  "version": "0.1.0",
+  "description": "Official browser widget for DoDomain — opens the hosted domain-connect flow in a modal iframe and relays its lifecycle events.",
+  "license": "MIT",
+  "author": "Devino Solutions Inc",
+  "homepage": "https://dodomain.io",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DevinoSolutions/dodomain-sdk.git",
+    "directory": "connect"
+  },
+  "bugs": {
+    "url": "https://github.com/DevinoSolutions/dodomain-sdk/issues"
+  },
+  "keywords": [
+    "dodomain",
+    "custom-domain",
+    "domain-connect",
+    "dns",
+    "widget",
+    "iframe"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "prepublishOnly": "pnpm run typecheck && pnpm run test && pnpm run build"
+  },
+  "devDependencies": {
+    "@dodomain/core": "workspace:*",
+    "tsup": "^8.5.1",
+    "jsdom": "^29.1.1",
+    "@types/jsdom": "^28.0.3",
+    "@types/node": "^22.10.5",
+    "typescript": "^5.7.3"
+  }
+}

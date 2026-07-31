@@ -1,0 +1,63 @@
+{
+  "name": "@dodomain/node",
+  "version": "0.1.0",
+  "description": "Official server-side SDK for DoDomain — mint domain-connect sessions and verify signed webhooks.",
+  "license": "MIT",
+  "author": "Devino Solutions Inc",
+  "homepage": "https://dodomain.io",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DevinoSolutions/dodomain-sdk.git",
+    "directory": "node"
+  },
+  "bugs": {
+    "url": "https://github.com/DevinoSolutions/dodomain-sdk/issues"
+  },
+  "keywords": [
+    "dodomain",
+    "custom-domain",
+    "domain-connect",
+    "dns",
+    "cname",
+    "api",
+    "sdk"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "prepublishOnly": "pnpm run typecheck && pnpm run test && pnpm run build"
+  },
+  "devDependencies": {
+    "@dodomain/core": "workspace:*",
+    "zod": "^4.1.5",
+    "tsup": "^8.5.1",
+    "@types/node": "^22.10.5",
+    "typescript": "^5.7.3"
+  }
+}

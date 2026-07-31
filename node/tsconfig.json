@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    // F-008: @dodomain/core is a source-linked workspace dependency (no
+    // build step — its "exports" map points straight at .ts files, same as
+    // this package's own setup). tsc needs this to walk into core's own
+    // `.ts`-extension imports (e.g. records.ts's `from "./record-capabilities.ts"`)
+    // when it type-checks the dependency graph. Matches packages/core/tsconfig.json.
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts", "tsup.config.ts"]
+}
