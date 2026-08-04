@@ -56,6 +56,46 @@ test("showDoDomain appends a backdrop + iframe with the token and embed param en
   handle.close();
 });
 
+test("theme option rides the iframe URL and darkens the pre-paint (2026-08-04 embed polish)", () => {
+  const handle = showDoDomain({ token: "t1", loadTimeoutMs: 5_000, theme: "dark" });
+  const iframe = iframeEl();
+  assert.ok(iframe?.src.includes("theme=dark"));
+  assert.equal(iframe?.style.background, "rgb(23, 32, 28)");
+  handle.close();
+});
+
+test("no theme option ⇒ no theme param and the light pre-paint (back-compat)", () => {
+  const handle = showDoDomain({ token: "t1", loadTimeoutMs: 5_000 });
+  const iframe = iframeEl();
+  assert.ok(!iframe?.src.includes("theme="));
+  assert.equal(iframe?.style.background, "rgb(255, 255, 255)");
+  handle.close();
+});
+
+test("dodomain:height resizes the iframe to the reported content height", () => {
+  const handle = showDoDomain({ token: "t1", loadTimeoutMs: 5_000 });
+  postToWidget({ type: "dodomain:height", height: 431 });
+  assert.equal(iframeEl()?.style.height, "431px");
+  handle.close();
+});
+
+test("dodomain:height clamps: never below 280px, never above 92% of the window", () => {
+  const handle = showDoDomain({ token: "t1", loadTimeoutMs: 5_000 });
+  postToWidget({ type: "dodomain:height", height: 10 });
+  assert.equal(iframeEl()?.style.height, "280px");
+  postToWidget({ type: "dodomain:height", height: 50_000 });
+  assert.equal(iframeEl()?.style.height, `${Math.floor(dom.window.innerHeight * 0.92)}px`);
+  handle.close();
+});
+
+test("a dodomain:height from a mismatched origin is ignored", () => {
+  const handle = showDoDomain({ token: "t1", loadTimeoutMs: 5_000 });
+  const before = iframeEl()?.style.height;
+  postToWidget({ type: "dodomain:height", height: 431 }, "https://evil.example.com");
+  assert.equal(iframeEl()?.style.height, before);
+  handle.close();
+});
+
 test("a message from a mismatched origin is ignored", () => {
   let verifiedCalled = false;
   const handle = showDoDomain({

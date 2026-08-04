@@ -27,6 +27,7 @@ import {
   EMBED_VALUE,
   MESSAGE_TYPES,
   ORIGIN_PARAM,
+  THEME_PARAM,
   type DoDomainMessage,
 } from "@dodomain/core/message-types";
 
@@ -50,6 +51,13 @@ export interface ShowDoDomainOptions {
    * handshake before treating the embed as failed-to-load. Default 15000.
    */
   loadTimeoutMs?: number;
+  /**
+   * Host-page theme (2026-08-04 embed polish). Pass the theme YOUR page is
+   * currently rendering so the embedded sheet matches it — the hosted flow
+   * adopts it and hides its own theme toggle. Omitted ⇒ the flow resolves
+   * its own theme (prefers-color-scheme / its visitor preference).
+   */
+  theme?: "light" | "dark";
 }
 
 /**
@@ -98,22 +106,38 @@ export function showDoDomain(opts: ShowDoDomainOptions): DoDomainHandle {
   const frame = document.createElement("iframe");
   // FIX(F-008/§10.1 origin scoping): appends this page's own origin so the
   // hosted flow can scope postMessage's targetOrigin to it instead of "*" —
-  // see connect-flow.tsx for the producer side of this handshake.
+  // see connect-flow.tsx for the producer side of this handshake. The theme
+  // param (2026-08-04 embed polish) hands the HOST page's theme to the flow
+  // so the sheet matches the page around it.
   frame.src =
     `${base}/connect/${encodeURIComponent(opts.token)}` +
-    `?${EMBED_PARAM}=${EMBED_VALUE}&${ORIGIN_PARAM}=${encodeURIComponent(window.location.origin)}`;
+    `?${EMBED_PARAM}=${EMBED_VALUE}&${ORIGIN_PARAM}=${encodeURIComponent(window.location.origin)}` +
+    (opts.theme ? `&${THEME_PARAM}=${opts.theme}` : "");
   frame.setAttribute("title", "Connect your domain");
-  // Graphite & Pine card: surface-1 white + 1px hairline, card radius 14px,
-  // level-3 (modal) graphite shadow. The white background also pre-paints the
-  // hosted flow's own light canvas, so a slow load never flashes dark.
+  // Graphite & Pine card: surface-1 + 1px hairline, card radius 14px,
+  // level-3 (modal) graphite shadow. The background pre-paints the hosted
+  // flow's canvas IN THE HANDED-OVER THEME, so a slow load never flashes the
+  // wrong brightness. Height starts compact and then HUGS THE CONTENT: the
+  // flow reports its natural height via `dodomain:height` (onMessage below)
+  // and the frame follows — a fixed-height box left a dead slab of empty
+  // canvas under short content (2026-08-04 embed polish).
+  const dark = opts.theme === "dark";
   Object.assign(frame.style, {
     width: "min(560px, 94vw)",
-    height: "min(680px, 92vh)",
-    border: "1px solid #e5e9e7",
+    height: "min(480px, 92vh)",
+    border: dark ? "1px solid #2a352f" : "1px solid #e5e9e7",
     borderRadius: "14px",
     boxShadow: "0 1px 2px rgba(23,32,28,0.05), 0 12px 32px rgba(23,32,28,0.14)",
-    background: "#ffffff",
+    background: dark ? "#17201c" : "#ffffff",
+    transition: "height 180ms ease",
   } as CSSStyleDeclaration);
+
+  function applyReportedHeight(height: number) {
+    if (!Number.isFinite(height) || height <= 0) return;
+    const max = Math.floor(window.innerHeight * 0.92);
+    const clamped = Math.max(280, Math.min(Math.ceil(height), max));
+    frame.style.height = `${clamped}px`;
+  }
 
   // FIX(F-010): the only reliable "did the flow actually come up?" signal —
   // a cross-origin iframe's 404/500 fires neither `onerror` nor exposes
@@ -168,6 +192,8 @@ export function showDoDomain(opts: ShowDoDomainOptions): DoDomainHandle {
     } else if (data.type === MESSAGE_TYPES.ERROR) {
       clearLoadTimer();
       opts.onError?.({ type: "session-error", code: data.code });
+    } else if (data.type === MESSAGE_TYPES.HEIGHT) {
+      applyReportedHeight(data.height);
     } else if (data.type === MESSAGE_TYPES.CLOSE) {
       close();
     }

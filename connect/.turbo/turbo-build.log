@@ -1,0 +1,22 @@
+
+> @dodomain/connect@0.1.0 build C:\Users\alaed\Documents\Github\dodomain\packages\connect
+> tsup
+
+[34mCLI[39m Building entry: src/index.ts
+[34mCLI[39m Using tsconfig: tsconfig.json
+[34mCLI[39m tsup v8.5.1
+[34mCLI[39m Using tsup config: C:\Users\alaed\Documents\Github\dodomain\packages\connect\tsup.config.ts
+[34mCLI[39m Target: es2020
+[34mCLI[39m Cleaning output folder
+[34mESM[39m Build start
+[34mCJS[39m Build start
+[32mCJS[39m [1mdist\index.cjs     [22m[32m3.95 KB[39m
+[32mCJS[39m [1mdist\index.cjs.map [22m[32m14.00 KB[39m
+[32mCJS[39m ⚡️ Build success in 126ms
+[32mESM[39m [1mdist\index.js     [22m[32m3.05 KB[39m
+[32mESM[39m [1mdist\index.js.map [22m[32m13.95 KB[39m
+[32mESM[39m ⚡️ Build success in 178ms
+[34mDTS[39m Build start
+[32mDTS[39m ⚡️ Build success in 6707ms
+[32mDTS[39m [1mdist\index.d.ts  [22m[32m1.83 KB[39m
+[32mDTS[39m [1mdist\index.d.cts [22m[32m1.83 KB[39m
