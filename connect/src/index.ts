@@ -123,6 +123,12 @@ export function showDoDomain(opts: ShowDoDomainOptions): DoDomainHandle {
   // canvas under short content (2026-08-04 embed polish).
   const dark = opts.theme === "dark";
   Object.assign(frame.style, {
+    // content-box is load-bearing: host pages routinely reset every element
+    // to border-box (Tailwind Preflight et al), which would make the 1px
+    // borders eat into the height applyReportedHeight sets — the inner
+    // viewport lands 2px short of the reported content and the sheet grows a
+    // permanent scrollbar (found live on Uptimely, 2026-08-04).
+    boxSizing: "content-box",
     width: "min(560px, 94vw)",
     height: "min(480px, 92vh)",
     border: dark ? "1px solid #2a352f" : "1px solid #e5e9e7",

@@ -72,6 +72,12 @@ test("no theme option ⇒ no theme param and the light pre-paint (back-compat)",
   handle.close();
 });
 
+test("frame pins content-box sizing so a host border-box reset cannot shave the reported height into a scrollbar", () => {
+  const handle = showDoDomain({ token: "t1", loadTimeoutMs: 5_000 });
+  assert.equal(iframeEl()?.style.boxSizing, "content-box");
+  handle.close();
+});
+
 test("dodomain:height resizes the iframe to the reported content height", () => {
   const handle = showDoDomain({ token: "t1", loadTimeoutMs: 5_000 });
   postToWidget({ type: "dodomain:height", height: 431 });
