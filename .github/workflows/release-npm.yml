@@ -136,10 +136,18 @@ jobs:
               echo "::add-mask::$granted"
             fi
 
-            if [ "$status" = "200" ] && [ -n "$granted" ]; then
-              echo "PASS  @dodomain/$pkg — npm accepted this workflow's identity and issued a publish credential"
+            # npm answers 201 Created, not 200 — it is minting a credential. Accept
+            # any 2xx and let the presence of the credential be the real verdict,
+            # so this cannot pass on a 2xx that carried nothing.
+            case "$status" in
+              2*) issued_ok=1 ;;
+              *) issued_ok=0 ;;
+            esac
+            if [ "$issued_ok" = "1" ] && [ -n "$granted" ]; then
+              echo "PASS  @dodomain/$pkg — HTTP $status, npm accepted this workflow's identity and issued a publish credential (${#granted} chars, masked)"
             else
-              echo "::error::FAIL @dodomain/$pkg — token exchange returned HTTP $status. Check the trusted publisher on npmjs.com: organization DevinoSolutions, repository dodomain-sdk, workflow release-npm.yml, environment blank — all matched exactly."
+              if [ -n "$granted" ]; then credential=present; else credential=absent; fi
+              echo "::error::FAIL @dodomain/$pkg — token exchange returned HTTP $status, credential $credential. Check the trusted publisher on npmjs.com: organization DevinoSolutions, repository dodomain-sdk, workflow release-npm.yml, environment blank — all matched exactly."
               jq -r '.message // .error // "(registry sent no message)"' /tmp/exchange.json || true
               failed=1
             fi
