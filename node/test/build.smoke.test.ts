@@ -51,7 +51,36 @@ test("the built CJS bundle exports the same three names", async () => {
 
 test("index.d.ts declares the same public names", () => {
   const dts = readFileSync(path.join(distDir, "index.d.ts"), "utf8");
-  for (const name of ["DoDomain", "DoDomainError", "verifyWebhook", "DoDomainOptions"]) {
+  for (const name of [
+    "DoDomain",
+    "DoDomainError",
+    "verifyWebhook",
+    "DoDomainOptions",
+    // The connections namespace + webhook envelope types (2026-08-17): a
+    // partner types their receiver against these, so they have to survive dts
+    // bundling, not just typecheck in-repo.
+    "Connection",
+    "ListConnectionsInput",
+    "ListConnectionsResult",
+    "DisconnectConnectionResult",
+    "ReverifyConnectionResult",
+    "WebhookEvent",
+    "WebhookEventWire",
+    // Full v1 parity (0.3.0). Same reason: an integrator types their rotation
+    // job / endpoint provisioning against these, so they have to survive dts
+    // bundling, not just typecheck in-repo.
+    "IntegratorSession",
+    "App",
+    "ListAppsResult",
+    "CheckDomainInput",
+    "CheckDomainResult",
+    "ProviderGuide",
+    "WebhookEndpoint",
+    "WebhookEndpointInput",
+    "WebhookEndpointWithSecret",
+    "DeleteWebhookEndpointResult",
+    "RotateSecretKeyResult",
+  ]) {
     assert.ok(dts.includes(name), `index.d.ts missing "${name}"`);
   }
 });

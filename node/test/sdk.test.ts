@@ -32,6 +32,8 @@ const VALID_RESPONSE = {
   token: "dd_sess_abc",
   expiresAt: new Date().toISOString(),
   connectUrl: "https://connect.dodomain.io/connect/dd_sess_abc",
+  // F3: the composed fqdn the server always returns for each requested record.
+  records: [{ type: "CNAME" as const, host: "app", fqdn: "app.app.customer.com" }],
 };
 
 test("FIXED(F-008): a non-JSON error body throws DoDomainError, never a raw SyntaxError", async () => {
@@ -66,6 +68,26 @@ test("a valid JSON success body returns the validated, parsed object (no regress
   const dodomain = client(fakeFetch(200, JSON.stringify(VALID_RESPONSE)));
   const session = await dodomain.sessions.create(VALID_INPUT);
   assert.deepEqual(session, VALID_RESPONSE);
+});
+
+// F3: the SDK is how most integrators meet this API, so the composed names and
+// any advisory have to survive the client's own parse — not just the wire.
+test("the SDK surfaces the composed fqdns and any warnings, typed, on the returned session", async () => {
+  const warned = {
+    ...VALID_RESPONSE,
+    warnings: [
+      {
+        code: "duplicate_host_label" as const,
+        message: 'host "app" repeats the leading label of domain "app.customer.com"',
+        host: "app",
+        fqdn: "app.app.customer.com",
+      },
+    ],
+  };
+  const dodomain = client(fakeFetch(200, JSON.stringify(warned)));
+  const session = await dodomain.sessions.create(VALID_INPUT);
+  assert.equal(session.records[0]?.fqdn, "app.app.customer.com");
+  assert.equal(session.warnings?.[0]?.code, "duplicate_host_label");
 });
 
 test("FIXED(F-008): a response missing a required field throws DoDomainError('invalid_response_shape'), not a silently-wrong object", async () => {

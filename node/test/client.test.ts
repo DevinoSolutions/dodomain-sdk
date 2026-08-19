@@ -23,6 +23,9 @@ const VALID_SESSION_BODY = {
   token: "dd_sess_abc",
   expiresAt: "2026-01-01T00:00:00.000Z",
   connectUrl: "https://app.dodomain.io/connect/dd_sess_abc",
+  // F3: the server always composes this, and the SDK validates the body it
+  // parses — a fixture without it is not a response the API can produce.
+  records: [{ type: "CNAME" as const, host: "app", fqdn: "app.acme.com" }],
 };
 
 function jsonResponse(body: unknown, status = 200): Response {

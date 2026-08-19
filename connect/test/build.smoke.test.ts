@@ -56,9 +56,24 @@ test("the built CJS bundle exports showDoDomain", () => {
 
 test("index.d.ts declares showDoDomain / ShowDoDomainOptions / DoDomainWidgetError", () => {
   const dts = readFileSync(path.join(distDir, "index.d.ts"), "utf8");
-  for (const name of ["showDoDomain", "ShowDoDomainOptions", "DoDomainWidgetError"]) {
+  for (const name of [
+    "showDoDomain",
+    "ShowDoDomainOptions",
+    "DoDomainWidgetError",
+    // 2026-08-17 additions — the typed mount failure + stateful close.
+    "MOUNT_BLOCKED",
+    "DoDomainSessionState",
+    "DoDomainCloseDetail",
+  ]) {
     assert.ok(dts.includes(name), `index.d.ts missing "${name}"`);
   }
+});
+
+test("the built ESM bundle exports the MOUNT_BLOCKED code partners switch on", async () => {
+  const mod: Record<string, unknown> = await import(
+    pathToFileURL(path.join(distDir, "index.js")).href
+  );
+  assert.equal(mod.MOUNT_BLOCKED, "MOUNT_BLOCKED");
 });
 
 test("F-010 BUILD-VERIFY: the widget bundle is zod-free (R5 tree-shaking claim, checked against real output)", () => {

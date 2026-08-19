@@ -1,6 +1,6 @@
 {
   "name": "@dodomain/connect",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Official browser widget for DoDomain — opens the hosted domain-connect flow in a modal iframe and relays its lifecycle events.",
   "license": "MIT",
   "author": "Devino Solutions Inc",
