@@ -66,7 +66,7 @@ importers:
   react:
     dependencies:
       '@dodomain/connect':
-        specifier: ^0.3.1
+        specifier: ^0.3.2
         version: link:../connect
     devDependencies:
       '@types/jsdom':
