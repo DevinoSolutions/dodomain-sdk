@@ -6,6 +6,9 @@ REST API — the integrator's backend uses it to mint **connect sessions**, whic
 
 > Uses your **secret key** (`dd_sk_…`). Keep it on the server. Never ship it to the browser.
 
+📖 **Guide with runnable examples: [dodomain.io/docs/node-sdk](https://dodomain.io/docs/node-sdk)**
+· all docs: [dodomain.io/docs](https://dodomain.io/docs).
+
 ## Install
 
 ```sh

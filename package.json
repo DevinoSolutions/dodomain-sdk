@@ -1,0 +1,14 @@
+{
+  "name": "dodomain-sdk",
+  "private": true,
+  "packageManager": "pnpm@10.14.0",
+  "engines": {
+    "node": ">=22.9"
+  },
+  "scripts": {
+    "build": "pnpm -r run build",
+    "typecheck": "pnpm -r run build && pnpm -r run typecheck",
+    "test": "pnpm -r run test",
+    "check": "pnpm run typecheck && pnpm run test"
+  }
+}

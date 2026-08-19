@@ -1,0 +1,184 @@
+name: Release (npm)
+
+# Publishes ONE SDK package to npm, token-lessly, via npm Trusted Publishing (OIDC).
+#
+# WHY THIS LIVES HERE and not in the private monorepo (DevinoSolutions/dodomain),
+# which is the source of truth for all this code: two npm rules, both verified
+# against npm's docs on 2026-08-19.
+#   1. Trusted publishing does NOT accept self-hosted runners ("Self-hosted
+#      runners are not currently supported but are planned for future
+#      releases"). The monorepo's CI is entirely on the org's `ubuntu-devino`
+#      runner, so an OIDC exchange there is rejected however it is configured.
+#   2. "Provenance generation is not supported for private repositories, even
+#      when publishing public packages" — attestations record the build's source
+#      in a public transparency log.
+# This repo is public, so it gets GitHub-hosted runners AND provenance. That is
+# why the monorepo's `packages/core` is vendored here as `core/`: without it
+# these packages cannot build, and a repo that cannot build cannot release.
+#
+# WHO RUNS THIS: a human. There is no push or release trigger on purpose —
+# nothing publishes as a side effect of a sync or a merge.
+#
+# WHAT IT PUBLISHES: whatever is on this repo's main branch. Releases are
+# therefore always "sync the mirror from the monorepo, then dispatch" — see
+# RUNBOOK.md §8 in the monorepo.
+#
+# NO TOKEN ANYWHERE: no NPM_TOKEN secret, no NODE_AUTH_TOKEN. npm authenticates
+# the run itself against the trusted publisher configured per package at
+# npmjs.com (package → Settings → Trusted Publisher → GitHub Actions):
+#   Organization or user: DevinoSolutions
+#   Repository:           dodomain-sdk
+#   Workflow filename:    release-npm.yml
+#   Environment name:     (blank — no job here declares an `environment:`, and
+#                          npm matches the field strictly)
+# npm matches all four EXACTLY. Renaming this file breaks all three configured
+# publishers until npm is updated to match.
+#
+# PROVENANCE IS AUTOMATIC: npm generates attestations for trusted-publishing
+# releases from GitHub Actions without `--provenance`. The flag is deliberately
+# NOT passed — leaving it off keeps the release working if this repo's
+# visibility ever changes, and the "Verify" step below asserts the attestations
+# actually landed, which is the real check.
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: "Which SDK package to publish (the version comes from its package.json — bump it in the monorepo and re-sync first)"
+        required: true
+        type: choice
+        options:
+          - node
+          - connect
+          - react
+
+# Two dispatches of the SAME package would race the registry. Never cancel a
+# publish in flight.
+concurrency:
+  group: release-npm-${{ inputs.package }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write # mints the short-lived OIDC token npm trusts; without it, auth fails
+
+jobs:
+  publish:
+    name: Publish @dodomain/${{ inputs.package }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Passed through the environment rather than interpolated into `run:`
+      # bodies (GitHub's script-injection guidance); `choice` already
+      # constrains the value to the three options above.
+      PKG_DIR: ${{ inputs.package }}
+      PKG_NAME: "@dodomain/${{ inputs.package }}"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        # Deliberately NO `registry-url`: that writes an .npmrc line binding
+        # auth to NODE_AUTH_TOKEN, and this release has no token to bind. The
+        # default registry is registry.npmjs.org anyway.
+        with:
+          # Trusted publishing needs Node >= 22.14.0; 24 also matches the
+          # monorepo, whose test suites need stable type-stripping.
+          node-version: 24
+          cache: pnpm
+
+      - name: Ensure npm supports trusted publishing (needs >= 11.5.1)
+        # setup-node ships whatever npm the Node build bundles, which has been
+        # older than the OIDC floor. Upgrade, then ASSERT — a silent no-op here
+        # would surface later as an unexplained auth failure.
+        run: |
+          npm install -g npm@latest
+          have="$(npm --version)"
+          need="11.5.1"
+          if [ "$(printf '%s\n%s\n' "$need" "$have" | sort -V | head -1)" != "$need" ]; then
+            echo "::error::npm $have is below the $need required for trusted publishing."
+            exit 1
+          fi
+          echo "npm $have — OIDC capable"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve the version being published
+        id: version
+        run: |
+          version="$(node -p "require('./$PKG_DIR/package.json').version")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Publishing $PKG_NAME@$version"
+
+      - name: Refuse to republish an existing version
+        # npm would reject this anyway, but its E403 arrives after everything
+        # below has run and reads like an auth problem. Fail early, name the
+        # actual cause and the actual fix.
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          if npm view "$PKG_NAME@$version" version >/dev/null 2>&1; then
+            echo "::error::$PKG_NAME@$version is already on npm. Bump it in the monorepo, re-run scripts/sdk/sync-mirror.mjs, then dispatch again."
+            exit 1
+          fi
+          echo "$PKG_NAME@$version is not on the registry yet — proceeding."
+
+      - name: Build @dodomain/connect (build-time input to @dodomain/react)
+        # react imports connect through its `types: ./dist/index.d.ts` — BUILT
+        # output that does not exist on a fresh checkout. Unconditional because
+        # it takes seconds and connect is itself a release target.
+        run: pnpm --filter @dodomain/connect build
+
+      # The three steps below are the package's own `prepublishOnly` chain, run
+      # explicitly. A failure then names the gate that failed instead of
+      # surfacing as an opaque publish error.
+      - name: Typecheck
+        run: pnpm --filter "$PKG_NAME" run typecheck
+
+      - name: Test
+        run: pnpm --filter "$PKG_NAME" run test
+
+      - name: Build
+        run: pnpm --filter "$PKG_NAME" run build
+
+      - name: Publish to npm (token-less, OIDC, with provenance)
+        # Published from the package DIRECTORY, not a packed tarball, so npm has
+        # the full context it needs to generate provenance. No NODE_AUTH_TOKEN:
+        # the npm CLI detects the GitHub Actions OIDC environment and exchanges
+        # the id-token for a short-lived credential scoped to this package's
+        # trusted publisher.
+        working-directory: ${{ inputs.package }}
+        run: npm publish --access public
+
+      - name: Verify the registry serves the new version, with attestations
+        # A publish that "succeeded" without landing, or that landed without
+        # provenance, are both failures worth catching here rather than
+        # discovering later. npm's read path is CDN-cached, so allow a little
+        # time for the new version to appear.
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          for attempt in 1 2 3 4 5 6; do
+            published="$(npm view "$PKG_NAME" version 2>/dev/null || true)"
+            [ "$published" = "$version" ] && break
+            echo "attempt $attempt: registry still on '${published:-none}', waiting"
+            sleep 10
+          done
+          published="$(npm view "$PKG_NAME" version 2>/dev/null || true)"
+          if [ "$published" != "$version" ]; then
+            echo "::error::$PKG_NAME@$version did not appear on the registry after publish."
+            exit 1
+          fi
+          echo "registry serves $PKG_NAME@$version"
+          attestations="$(npm view "$PKG_NAME@$version" dist.attestations --json 2>/dev/null || true)"
+          if [ -z "$attestations" ] || [ "$attestations" = "undefined" ]; then
+            echo "::error::$PKG_NAME@$version published WITHOUT provenance attestations. Trusted publishing from a public repo should generate them — check that this repo is still public."
+            exit 1
+          fi
+          echo "provenance attestations present:"
+          echo "$attestations"

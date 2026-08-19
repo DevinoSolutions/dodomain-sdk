@@ -3,7 +3,10 @@
 Official React bindings for [DoDomain](https://dodomain.io) — a hook (and a drop-in button)
 around the [`@dodomain/connect`](https://www.npmjs.com/package/@dodomain/connect) modal widget.
 Pairs with [`@dodomain/node`](https://www.npmjs.com/package/@dodomain/node), which mints the
-session token on your server. Full product docs: [dodomain.io/docs](https://dodomain.io/docs).
+session token on your server.
+
+📖 **Guide with runnable examples: [dodomain.io/docs/react-sdk](https://dodomain.io/docs/react-sdk)**
+· all docs: [dodomain.io/docs](https://dodomain.io/docs).
 
 ## Install
 

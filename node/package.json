@@ -1,6 +1,6 @@
 {
   "name": "@dodomain/node",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Official server-side SDK for DoDomain — mint domain-connect sessions and verify signed webhooks.",
   "license": "MIT",
   "author": "Devino Solutions Inc",
@@ -54,7 +54,7 @@
     "prepublishOnly": "pnpm run typecheck && pnpm run test && pnpm run build"
   },
   "devDependencies": {
-    "@dodomain/core": "workspace:*",
+    "@dodomain/core": "0.0.0",
     "zod": "^4.1.5",
     "tsup": "^8.5.1",
     "@types/node": "^22.10.5",

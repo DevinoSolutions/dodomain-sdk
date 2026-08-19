@@ -4,6 +4,9 @@ Embeddable browser widget for [DoDomain](https://dodomain.io). Opens the hosted 
 in a modal iframe and relays its lifecycle events back to your app. Pairs with
 [`@dodomain/node`](../node), which mints the session token on your server.
 
+📖 **Guide with runnable examples: [dodomain.io/docs/widget](https://dodomain.io/docs/widget)**
+· all docs: [dodomain.io/docs](https://dodomain.io/docs). Using React? [`@dodomain/react`](https://www.npmjs.com/package/@dodomain/react) wraps this widget in a hook.
+
 ## Install
 
 ```sh

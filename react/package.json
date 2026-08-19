@@ -1,6 +1,6 @@
 {
   "name": "@dodomain/react",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Official React bindings for DoDomain — a hook (and drop-in button) around the @dodomain/connect modal widget.",
   "license": "MIT",
   "author": "Devino Solutions Inc",
@@ -54,7 +54,7 @@
     "react": ">=18"
   },
   "dependencies": {
-    "@dodomain/connect": "workspace:^"
+    "@dodomain/connect": "^0.3.1"
   },
   "devDependencies": {
     "@types/jsdom": "^28.0.3",

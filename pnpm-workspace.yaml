@@ -1,0 +1,5 @@
+packages:
+  - "core"
+  - "connect"
+  - "node"
+  - "react"

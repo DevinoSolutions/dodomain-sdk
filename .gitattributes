@@ -1,0 +1,16 @@
+# Enforce LF in the working tree on all platforms. The monorepo this repo is
+# synced from does the same, so the files packed into a tarball here are
+# byte-identical to the ones packed there regardless of a contributor's git
+# `core.autocrlf` setting. Committed blobs are already LF.
+* text=auto eol=lf
+
+# Binary assets — never line-ending-normalize.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
