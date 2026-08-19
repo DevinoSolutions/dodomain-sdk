@@ -1,7 +1,7 @@
 # @dodomain/core
 
 The DoDomain protocol engine — ported from the proven POC (see
-[`docs/archive/2026-06-plan-v1/domain-connect-poc.md`](../../docs/archive/2026-06-plan-v1/domain-connect-poc.md);
+`docs/archive/2026-06-plan-v1/domain-connect-poc.md` (in the private DoDomain monorepo);
 original POC code preserved in git history at commit `d70302b`).
 Internal package (consumed by `apps/web`); not published on its own.
 
@@ -36,4 +36,4 @@ pnpm --filter @dodomain/core test   # node --experimental-strip-types --test
 ```
 
 The three-tier model (Cloudflare OAuth → Domain Connect → guided-manual) and the verification
-approach are documented in [`PLAN.md`](../../docs/archive/2026-06-plan-v1/PLAN.md).
+approach are documented in `PLAN.md` (in the private DoDomain monorepo).
