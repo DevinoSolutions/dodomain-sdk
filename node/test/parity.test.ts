@@ -491,6 +491,7 @@ test("keys.rotate POSTs /api/v1/keys/rotate with the CURRENT key and returns the
     publicKey: "pk_live_123",
     secretKey: "dd_sk_new_456",
     rotatedAt: "2026-08-19T09:00:00.000Z",
+    previousKeyExpiresAt: null,
   });
 
   const rotated = await client(fetchImpl).keys.rotate();
@@ -502,8 +503,65 @@ test("keys.rotate POSTs /api/v1/keys/rotate with the CURRENT key and returns the
     `Bearer ${VALID_KEY}`,
     "the key being replaced is what authorizes its own replacement",
   );
+  assert.equal(
+    seen[0]?.body,
+    null,
+    "the default cutover stays body-less on the wire — the request every server version accepts",
+  );
   assert.equal(rotated.secretKey, "dd_sk_new_456", "this response is the only copy of the new key");
   assert.equal(rotated.publicKey, "pk_live_123", "the publishable key is echoed unrotated");
+  assert.equal(rotated.previousKeyExpiresAt, null, "zero overlap means no previous-key window");
+});
+
+test("keys.rotate with overlapHours sends the window in the body and surfaces previousKeyExpiresAt", async () => {
+  const seen: SeenRequest[] = [];
+  const { fetchImpl } = recordingFetch(seen, {
+    appId: "app_1",
+    publicKey: "pk_live_123",
+    secretKey: "dd_sk_new_456",
+    rotatedAt: "2026-08-19T09:00:00.000Z",
+    previousKeyExpiresAt: "2026-08-19T10:00:00.000Z",
+  });
+
+  const rotated = await client(fetchImpl).keys.rotate({ overlapHours: 1 });
+
+  assert.equal(seen[0]?.url, "https://app.dodomain.io/api/v1/keys/rotate");
+  assert.deepEqual(JSON.parse(seen[0]?.body ?? "null"), { overlapHours: 1 });
+  assert.equal(
+    rotated.previousKeyExpiresAt,
+    "2026-08-19T10:00:00.000Z",
+    "the caller needs the window's end to schedule its own cutover check",
+  );
+});
+
+test("keys.rotate with an explicit overlapHours 0 stays body-less — 0 is the kill switch, not a window", async () => {
+  const seen: SeenRequest[] = [];
+  const { fetchImpl } = recordingFetch(seen, {
+    appId: "app_1",
+    publicKey: "pk_live_123",
+    secretKey: "dd_sk_new_456",
+    rotatedAt: "2026-08-19T09:00:00.000Z",
+    previousKeyExpiresAt: null,
+  });
+
+  await client(fetchImpl).keys.rotate({ overlapHours: 0 });
+
+  assert.equal(seen[0]?.body, null);
+});
+
+test("keys.rotate rejects an overlapHours outside 0|1|24 before any network call", async () => {
+  const { fetchImpl, wasCalled } = unreachableFetch();
+
+  await assert.rejects(
+    () => client(fetchImpl).keys.rotate({ overlapHours: 2 as unknown as 1 }),
+    (err: unknown) => {
+      assert.ok(err instanceof DoDomainError);
+      assert.equal(err.message, "invalid_request");
+      assert.equal(err.status, 0, "no request was sent");
+      return true;
+    },
+  );
+  assert.equal(wasCalled(), false);
 });
 
 test("keys.rotate fails loudly rather than returning a rotation result with no new key", async () => {

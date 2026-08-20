@@ -1,6 +1,6 @@
 {
   "name": "@dodomain/node",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "Official server-side SDK for DoDomain — mint domain-connect sessions and verify signed webhooks.",
   "license": "MIT",
   "author": "Devino Solutions Inc",

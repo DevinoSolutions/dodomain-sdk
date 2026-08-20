@@ -18,6 +18,7 @@ import {
   zListConnectionsResponse,
   zListWebhookEndpointsResponse,
   zReverifyConnectionResponse,
+  zRotateAppSecretKeyInput,
   zRotateAppSecretKeyResponse,
   zWebhookEndpointInput,
   zWebhookEndpointSecretResponse,
@@ -39,6 +40,7 @@ import type {
   ListConnectionsResult,
   ListWebhookEndpointsResult,
   ReverifyConnectionResult,
+  RotateSecretKeyInput,
   RotateSecretKeyResult,
   Session,
   VerifyWebhook,
@@ -78,6 +80,7 @@ export type {
   ListWebhookEndpointsResult,
   ProviderGuide,
   ReverifyConnectionResult,
+  RotateSecretKeyInput,
   RotateSecretKeyResult,
   Session,
   SessionWarning,
@@ -336,14 +339,24 @@ export class DoDomain {
      * which is what makes scheduled credential rotation automatable instead of
      * a dashboard click.
      *
-     * **NO GRACE WINDOW.** The key that authorized this call stops
-     * authenticating the instant it returns, so the returned `secretKey` is the
-     * ONLY copy of the new credential — persist it before anything else. A
-     * caller that drops it has locked itself out of the API and must rotate
-     * again from the dashboard. This client instance keeps using the OLD key,
-     * so construct a new `DoDomain` with the returned `secretKey` to keep
-     * working. `publicKey` is echoed unchanged, so an automated job can assert
-     * it rewrote the app it meant to.
+     * **DEFAULT: NO GRACE WINDOW.** With no argument (or `overlapHours: 0`) the
+     * key that authorized this call stops authenticating the instant it
+     * returns, so the returned `secretKey` is the ONLY copy of the new
+     * credential — persist it before anything else. A caller that drops it has
+     * locked itself out of the API and must rotate again from the dashboard.
+     * A zero-overlap rotation also TERMINATES any overlap window still live
+     * from an earlier rotation — it is the "revoke the previous key now"
+     * escape hatch.
+     *
+     * **OPT-IN OVERLAP:** `{ overlapHours: 1 }` or `{ overlapHours: 24 }`
+     * keeps the OLD key authenticating alongside the new one until the
+     * returned `previousKeyExpiresAt`, so a rotator can deploy the new key
+     * with zero downtime. Exactly ONE previous key is ever kept: rotating
+     * again overwrites the slot, and key n-1 dies instantly regardless of
+     * remaining window. Either way, this client instance keeps using the key
+     * it was constructed with, so construct a new `DoDomain` with the returned
+     * `secretKey` to keep working past the window. `publicKey` is echoed
+     * unchanged, so an automated job can assert it rewrote the app it meant to.
      *
      * There is deliberately no create/list/revoke-another-key on this API: a
      * stolen `dd_sk_` must not be able to mint a second, hidden credential that
@@ -353,8 +366,21 @@ export class DoDomain {
      * `details.code === "SECRET_KEY_REQUIRED"`; this SDK only ever sends a
      * `dd_sk_` key, so through it that refusal cannot occur.
      */
-    rotate: async (): Promise<RotateSecretKeyResult> =>
-      this.request("POST", "/api/v1/keys/rotate", undefined, zRotateAppSecretKeyResponse),
+    rotate: async (input: RotateSecretKeyInput = {}): Promise<RotateSecretKeyResult> => {
+      const parsedInput = zRotateAppSecretKeyInput.safeParse(input);
+      if (!parsedInput.success) {
+        throw new DoDomainError("invalid_request", 0, parsedInput.error.flatten());
+      }
+      // The default cutover goes on the wire as NO body — the exact request
+      // every server version has always accepted; only a requested window
+      // sends the (newer) body.
+      return this.request(
+        "POST",
+        "/api/v1/keys/rotate",
+        parsedInput.data.overlapHours === 0 ? undefined : parsedInput.data,
+        zRotateAppSecretKeyResponse,
+      );
+    },
   };
 
   // The connections namespace (2026-08-17). Before it, an integrator who needed

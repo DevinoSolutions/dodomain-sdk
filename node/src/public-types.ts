@@ -325,12 +325,23 @@ export interface DeleteWebhookEndpointResult {
 
 // ── Credentials ─────────────────────────────────────────────────────────────
 
+/** Argument of keys.rotate (pin: core zRotateAppSecretKeyInput).
+ *
+ * Omit it (or pass `overlapHours: 0`) for the default IMMEDIATE cutover — the
+ * kill switch, which also terminates any overlap window still live from an
+ * earlier rotation. `1 | 24` keeps the old key authenticating for that many
+ * hours alongside the new one. Exactly ONE previous key is ever kept: rotating
+ * again replaces it, killing key n-1 instantly. */
+export interface RotateSecretKeyInput {
+  overlapHours?: 0 | 1 | 24;
+}
+
 /** Outcome of keys.rotate (pin: core zRotateAppSecretKeyResponse).
  *
- * **NO GRACE WINDOW.** The key that authorized the call stopped authenticating
- * the instant this was produced, so this object is the ONLY copy of the new
- * secret — a caller that drops it has locked itself out of the API and must
- * rotate again from the dashboard. */
+ * With the default `overlapHours: 0` there is NO grace window: the key that
+ * authorized the call stopped authenticating the instant this was produced, so
+ * this object is the ONLY copy of the new secret — a caller that drops it has
+ * locked itself out of the API and must rotate again from the dashboard. */
 export interface RotateSecretKeyResult {
   appId: string;
   /** Echoed UNCHANGED — rotation never touches the publishable key. Assert on
@@ -339,6 +350,10 @@ export interface RotateSecretKeyResult {
   /** The NEW `dd_sk_...`. Persist it before doing anything else. */
   secretKey: string;
   rotatedAt: string;
+  /** When the PREVIOUS key stops authenticating — null on a zero-overlap
+   * rotation (it already has). Only one previous key ever exists; a later
+   * rotation replaces it. */
+  previousKeyExpiresAt: string | null;
 }
 
 // ── Webhooks ────────────────────────────────────────────────────────────────

@@ -1002,14 +1002,43 @@ export type DeleteWebhookEndpointResponse = z.infer<typeof zDeleteWebhookEndpoin
 // app in the widget and is never rotated here), which is how a CI job can
 // assert it rewrote the right app's secret. There is deliberately no create/
 // list/delete of keys over the API: see the route's header.
+
+/** The only overlap windows a rotation may request. 0 = immediate cutover (the
+ * default, and the kill switch — it also ends any live window); 1 and 24 are
+ * the opt-in grace windows during which BOTH keys authenticate. */
+export const ROTATION_OVERLAP_HOURS = [0, 1, 24] as const;
+
+export type RotationOverlapHours = (typeof ROTATION_OVERLAP_HOURS)[number];
+
+/** Body of POST /api/v1/keys/rotate — OPTIONAL: an absent/empty body means
+ * `overlapHours: 0`, the immediate cutover every pre-window caller already
+ * relies on. Exactly ONE previous key is ever kept: rotating again while a
+ * window is live replaces the previous slot (key n-1 dies instantly), and a
+ * zero-overlap rotate clears it — rotating with the default is how you revoke
+ * a previous key early. */
+export const zRotateAppSecretKeyInput = z.object({
+  /** 0 (default) = the old key dies instantly; 1 | 24 = the old key keeps
+   * authenticating for that many hours alongside the new one. */
+  overlapHours: z
+    .union([z.literal(0), z.literal(1), z.literal(24)])
+    .optional()
+    .default(0),
+});
+
+export type RotateAppSecretKeyInput = z.input<typeof zRotateAppSecretKeyInput>;
+
 export const zRotateAppSecretKeyResponse = z.object({
   appId: z.string(),
   /** Unchanged by rotation — echoed so an automated caller can verify the app. */
   publicKey: z.string(),
-  /** The NEW `dd_sk_...`, shown once. The old key stopped authenticating the
-   * moment this response was produced — there is no overlap window. */
+  /** The NEW `dd_sk_...`, shown once. With the default `overlapHours: 0` the
+   * old key stopped authenticating the moment this response was produced. */
   secretKey: z.string(),
   rotatedAt: z.iso.datetime(),
+  /** When the PREVIOUS key stops authenticating — null on a zero-overlap
+   * rotation (it already has). Only ever one previous key: a later rotation
+   * replaces it. */
+  previousKeyExpiresAt: z.iso.datetime().nullable(),
 });
 
 export type RotateAppSecretKeyResponse = z.infer<typeof zRotateAppSecretKeyResponse>;

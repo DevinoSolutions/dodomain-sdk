@@ -12,6 +12,7 @@ import type {
   zCreateSessionInput,
   zListConnectionsQuery,
   zProviderGuide,
+  zRotateAppSecretKeyInput,
   CheckDomainResponse as CoreCheckDomainResponse,
   CreateSessionResponse as CoreCreateSessionResponse,
   ConnectionSummary as CoreConnectionSummary,
@@ -47,6 +48,7 @@ import type {
   ListWebhookEndpointsResult,
   ProviderGuide,
   ReverifyConnectionResult,
+  RotateSecretKeyInput,
   RotateSecretKeyResult,
   Session,
   VerifyWebhook,
@@ -99,4 +101,9 @@ export type SchemaParityPins = [
   Expect<MutuallyAssignable<WebhookEndpointWithSecret, CoreWebhookEndpointSecretResponse>>,
   Expect<MutuallyAssignable<DeleteWebhookEndpointResult, CoreDeleteWebhookEndpointResponse>>,
   Expect<MutuallyAssignable<RotateSecretKeyResult, CoreRotateAppSecretKeyResponse>>,
+  // Rotation-overlap opt-in (0.4.0). Pins against z.input, not z.infer:
+  // `overlapHours` carries a schema default, so the output type has it
+  // required while a caller legitimately omits it (the ListConnectionsInput
+  // reasoning).
+  Expect<MutuallyAssignable<RotateSecretKeyInput, z.input<typeof zRotateAppSecretKeyInput>>>,
 ];

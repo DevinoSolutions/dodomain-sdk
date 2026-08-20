@@ -106,12 +106,20 @@ await dodomain.webhookEndpoints.delete(endpoint.id);
 ### Rotating your secret key
 
 ```ts
-// The calling key replaces itself. There is NO overlap window: the old key
-// stops working the instant this returns, and this is the only copy of the new
-// one — persist it before doing anything else.
+// The calling key replaces itself. By DEFAULT there is NO overlap window: the
+// old key stops working the instant this returns, and this is the only copy of
+// the new one — persist it before doing anything else.
 const rotated = await dodomain.keys.rotate();
 await saveSecretKey(rotated.secretKey); // dd_sk_…
 const next = new DoDomain({ secretKey: rotated.secretKey }); // this client still holds the old key
+
+// Opt-in zero-downtime rotation: both keys work until previousKeyExpiresAt
+// (1 or 24 hours). Exactly ONE previous key is kept — rotating again replaces
+// it (killing key n-1 instantly), and rotating with the default overlapHours: 0
+// ends a live window early: for a leaked key, rotation IS the revoke.
+const overlapped = await dodomain.keys.rotate({ overlapHours: 1 });
+await saveSecretKey(overlapped.secretKey);
+console.log(`old key dies at ${overlapped.previousKeyExpiresAt}`);
 ```
 
 ### Verifying webhooks
