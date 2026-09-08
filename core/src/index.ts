@@ -2,12 +2,29 @@
 // Domain Connect: discovery → template-support → signed apply-URL → verify.
 // Cloudflare OAuth: PKCE authorize → token exchange → DNS write → verify → delete.
 
-export * from "./types.ts";
+export * from "./domain-connect-types.ts";
+export * from "./verify-types.ts";
 export * from "./discovery.ts";
 export * from "./applyUrl.ts";
 export * from "./sign.ts";
 export * from "./recipes.ts";
+// The Domain Connect template registry recipes.ts matches over — data only.
+export * from "./domain-connect-templates.ts";
 export { verifyRecord, verifyRecords } from "./verify.ts";
+// Post-verify TLS-issuance advisories (CAA + stale `_acme-challenge`), read
+// through verify.ts's own resolver path. Advice about the step AFTER ours —
+// never an input to a verify verdict.
+export { detectTlsIssuanceAdvisories } from "./tls-issuance-advisories.ts";
+export * from "./tls-issuance-advisory-types.ts";
+// Public domain tools (dodomain.io/tools/*, Tier-1 #1): the SPF checker and the
+// authoritative-vs-public DNS lookup. Both ride verify.ts's resolver seams.
+export * from "./spf.ts";
+export * from "./spf-types.ts";
+export * from "./dns-lookup.ts";
+// The preflight honesty copy (also "@dodomain/core/preflight-copy" for client bundles).
+export * from "./preflight-copy.ts";
+// The nightly provider-watch snapshot shape (also "@dodomain/core/provider-watch").
+export * from "./provider-watch.ts";
 export * from "./detect.ts";
 // The ONE apex/eTLD+1 util (F-011). check-apex-bans.sh guards re-DECLARATIONS,
 // not this re-export. NOTE: "which zone owns these records" is NOT this — it is

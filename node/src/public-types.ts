@@ -63,8 +63,13 @@ export interface SessionWarning {
   fqdn: string;
 }
 
-/** A minted connect session (pin: core zCreateSessionResponse). */
-export interface Session {
+/** A minted connect session, as `sessions.create` returns it (pin: core
+ * zCreateSessionResponse). Named for what it is — the summary of ONE
+ * ConnectSession (id, token, expiry, connect URL, composed records) — so it
+ * cannot be mistaken for the dashboard auth session or the server-side
+ * ConnectSession row, which are different things entirely (naming batch 8,
+ * 2026-09-02). */
+export interface ConnectSessionSummary {
   id: string;
   token: string;
   /** ISO 8601 datetime. */
@@ -76,6 +81,13 @@ export interface Session {
   /** Present only when there is something worth saying about the request. */
   warnings?: SessionWarning[];
 }
+
+/**
+ * @deprecated Renamed to {@link ConnectSessionSummary} in 0.5.0 — the same
+ * type under a name that says which "session" it is. This alias will be
+ * REMOVED in the next major release; switch your imports now.
+ */
+export type Session = ConnectSessionSummary;
 
 // ── Connections ─────────────────────────────────────────────────────────────
 // The `connections` namespace (2026-08-17). Before it, every integrator
@@ -194,6 +206,36 @@ export interface IntegratorSession {
   /** DERIVED at read (`expiresAt <= now`), so it is already true in the window
    * before the reaper persists `status: "expired"`. */
   expired: boolean;
+  /** The TLS-issuance advisories the LAST verify pass computed — a snapshot,
+   * empty until a verify has run. See TlsIssuanceAdvisory. */
+  tlsIssuanceAdvisories: TlsIssuanceAdvisory[];
+}
+
+/** Why a certificate issuance for a verified name may still fail (pin: core
+ * zTlsIssuanceAdvisory). Read on every verify pass from the domain's own
+ * nameservers; advice for YOUR next step, never part of the verify verdict.
+ * Carried on `connection.verified` / `session.completed` (only when non-empty),
+ * `sessions.get` and the verify response. */
+export interface TlsIssuanceAdvisory {
+  /** `caa_excludes_issuer` — a CAA policy leaves out the CA configured on the app.
+   * `caa_restricts_issuance` — a CAA policy exists and no CA is configured to judge it.
+   * `stale_acme_challenge` — `_acme-challenge.<fqdn>` already holds a TXT or CNAME.
+   * `tls_issuance_unchecked` — the check itself could not complete (unknown ≠ clean). */
+  code:
+    | "caa_excludes_issuer"
+    | "caa_restricts_issuance"
+    | "stale_acme_challenge"
+    | "tls_issuance_unchecked";
+  /** `warning` plausibly breaks issuance; `info` is a fact without a verdict. */
+  severity: "warning" | "info";
+  /** The name the certificate is for. */
+  fqdn: string;
+  /** Where the evidence was read — the CAA owner (possibly a parent), or `_acme-challenge.<fqdn>`. */
+  evidenceFqdn: string;
+  /** The published values, verbatim. */
+  evidence: string[];
+  /** One human-readable sentence. */
+  note: string;
 }
 
 // ── Apps ────────────────────────────────────────────────────────────────────
@@ -210,6 +252,9 @@ export interface App {
   /** Integrator branding; null until configured. */
   logoUrl: string | null;
   brandColor: string | null;
+  /** The CAA issuer-domain your certificates are issued with (e.g. `letsencrypt.org`);
+   * null until configured in the dashboard. Drives `caa_excludes_issuer` advisories. */
+  tlsIssuerCa: string | null;
   createdAt: string;
 }
 

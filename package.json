@@ -5,6 +5,9 @@
   "engines": {
     "node": ">=22.9"
   },
+  "devDependencies": {
+    "typescript": "^7.0.2"
+  },
   "scripts": {
     "build": "pnpm -r run build",
     "typecheck": "pnpm -r run build && pnpm -r run typecheck",

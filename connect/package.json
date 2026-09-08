@@ -1,7 +1,7 @@
 {
   "name": "@dodomain/connect",
   "version": "0.3.2",
-  "description": "Official browser widget for DoDomain — opens the hosted domain-connect flow in a modal iframe and relays its lifecycle events.",
+  "description": "Custom domains for SaaS — the official DoDomain browser widget: opens the hosted connect flow (Cloudflare one-click, Domain Connect, guided DNS) in a modal iframe and relays its lifecycle events.",
   "license": "MIT",
   "author": "Devino Solutions Inc",
   "homepage": "https://dodomain.io",
@@ -16,7 +16,15 @@
   "keywords": [
     "dodomain",
     "custom-domain",
+    "custom-domains",
+    "custom-domains-for-saas",
+    "saas",
+    "multi-tenant",
+    "white-label",
+    "bring-your-own-domain",
     "domain-connect",
+    "domain-connect-protocol",
+    "domainconnect",
     "dns",
     "widget",
     "iframe"
@@ -47,14 +55,24 @@
     "build": "tsup",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test test/*.test.ts",
-    "prepublishOnly": "pnpm run typecheck && pnpm run test && pnpm run build"
+    "prepublishOnly": "pnpm run typecheck && pnpm run test && pnpm run build",
+    "size": "size-limit"
   },
   "devDependencies": {
     "@dodomain/core": "0.0.0",
-    "tsup": "^8.5.1",
-    "jsdom": "^29.1.1",
+    "@size-limit/preset-small-lib": "^13.0.3",
     "@types/jsdom": "^28.0.3",
     "@types/node": "^22.10.5",
-    "typescript": "^5.7.3"
-  }
+    "jsdom": "^29.1.1",
+    "size-limit": "^13.0.3",
+    "tsup": "^8.5.1",
+    "typescript": "npm:@typescript/typescript6@^6.0.2"
+  },
+  "size-limit": [
+    {
+      "name": "widget (ESM, minified + brotli)",
+      "path": "dist/index.js",
+      "limit": "1.35 kB"
+    }
+  ]
 }

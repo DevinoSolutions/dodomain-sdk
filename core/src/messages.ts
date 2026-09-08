@@ -23,7 +23,7 @@
 // validator. packages/connect now imports directly from
 // "@dodomain/core/message-types", never from this file, so zod can never
 // reach that bundle regardless of tree-shaking.
-import { z } from "zod";
+import { z } from "./zod-runtime.ts";
 
 import {
   EMBED_PARAM,

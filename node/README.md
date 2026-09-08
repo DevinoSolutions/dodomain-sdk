@@ -1,8 +1,12 @@
 # @dodomain/node
 
-Server-side SDK for [DoDomain](https://dodomain.io). A thin, typed client over the DoDomain
-REST API — the integrator's backend uses it to mint **connect sessions**, which the browser
-[`@dodomain/connect`](../connect) widget then drives.
+Custom domains for SaaS, from your server: the official Node/TypeScript SDK for
+[DoDomain](https://dodomain.io). A thin, typed client over the DoDomain REST API — mint
+**connect sessions** that walk your customer through a one-click Cloudflare OAuth apply, a
+signed [Domain Connect](https://www.domainconnect.org/) apply where their DNS provider supports
+it, or guided records everywhere else; then verify the signed webhooks DoDomain sends once the
+records are live at the authoritative nameservers. The browser [`@dodomain/connect`](../connect)
+widget drives the session on the front end.
 
 > Uses your **secret key** (`dd_sk_…`). Keep it on the server. Never ship it to the browser.
 
@@ -155,12 +159,14 @@ plus webhook signature verification.
 | `baseUrl`   | `string`       | API base. Defaults to `https://app.dodomain.io` (self-hosted/custom deployments override this). |
 | `fetchImpl` | `typeof fetch` | Override the fetch used (tests, custom agents).                                                 |
 
-### `dodomain.sessions.create(input) → Promise<Session>`
+### `dodomain.sessions.create(input) → Promise<ConnectSessionSummary>`
 
 `input`: `{ domain, records, returnUrl?, recipe? }` — `domain` (two or more DNS labels, no
 scheme/port/trailing dot) and `records` are both required; `returnUrl` must be http(s).
 `recipe` is accepted for wire compatibility but is consumed by nothing today and does not
-substitute for `records`. Returns `{ id, token, expiresAt, connectUrl }`.
+substitute for `records`. Returns `{ id, token, expiresAt, connectUrl, records, warnings? }`.
+The return type was named `Session` before 0.5.0; that alias is still exported, marked
+`@deprecated`, and will be removed in the next major — import `ConnectSessionSummary`.
 
 Errors throw `DoDomainError` with `.status` and `.body`. A malformed (non-JSON) or
 schema-invalid response also throws `DoDomainError` — never a raw platform error.

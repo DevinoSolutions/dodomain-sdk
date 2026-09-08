@@ -5,6 +5,7 @@
 // the user approved is what authorizes the record write.
 
 import { CF_API_BASE } from "./config.ts";
+import { describeField, readField } from "./upstream-json.ts";
 import { recordValueMatches, type RecordType } from "../record-capabilities.ts";
 
 export class CfDnsError extends Error {}
@@ -38,7 +39,7 @@ async function cfApi<T>(input: ApiInput): Promise<CfEnvelope<T>> {
     body: input.body === undefined ? undefined : JSON.stringify(input.body),
   });
   const text = await res.text();
-  let json: any;
+  let json: unknown;
   try {
     json = JSON.parse(text);
   } catch {
@@ -46,12 +47,19 @@ async function cfApi<T>(input: ApiInput): Promise<CfEnvelope<T>> {
       `Cloudflare API returned non-JSON (HTTP ${res.status}): ${text.slice(0, 200)}`,
     );
   }
-  if (!res.ok || json.success === false) {
+  if (!res.ok || readField(json, "success") === false) {
+    const rawErrors = readField(json, "errors");
     const msg =
-      (json.errors ?? []).map((e: any) => `${e.code}: ${e.message}`).join("; ") ||
-      `HTTP ${res.status}`;
+      (Array.isArray(rawErrors) ? rawErrors : [])
+        .map(
+          (e: unknown) =>
+            `${describeField(readField(e, "code"))}: ${describeField(readField(e, "message"))}`,
+        )
+        .join("; ") || `HTTP ${res.status}`;
     throw new CfDnsError(`Cloudflare API error — ${msg}`);
   }
+  // Cloudflare's envelope is not validated field-by-field here: the shape of
+  // `result` is per-endpoint and every caller below re-reads it defensively.
   return json as CfEnvelope<T>;
 }
 
@@ -127,6 +135,36 @@ export async function createRecord(
       // it on MX records; the old code never sent it.
       ...(rec.priority !== undefined ? { priority: rec.priority } : {}),
     },
+    fetchImpl,
+  });
+  return env.result;
+}
+
+/**
+ * Rewrite an EXISTING record's content in place (requires dns.write).
+ *
+ * The only in-place write DoDomain performs: apply.ts is otherwise strictly
+ * non-destructive (an existing record is left alone and reported as a conflict).
+ * SPF is the documented exception — a zone may hold only one `v=spf1` record
+ * (RFC 7208 §3.2), so "add our include" HAS to edit the record that is there.
+ *
+ * PATCH, and only `content` is sent: Cloudflare leaves every field the body
+ * omits as it was, so the zone's TTL, proxied flag and comment survive an edit
+ * we never asked to make. `type`/`name` travel purely as a sanity echo of the
+ * record we listed.
+ */
+export async function updateRecordContent(
+  token: string,
+  zoneId: string,
+  recordId: string,
+  rec: { type: RecordType; name: string; content: string },
+  fetchImpl?: typeof fetch,
+): Promise<DnsRecord> {
+  const env = await cfApi<DnsRecord>({
+    token,
+    method: "PATCH",
+    path: `/zones/${zoneId}/dns_records/${recordId}`,
+    body: { type: rec.type, name: rec.name, content: rec.content },
     fetchImpl,
   });
   return env.result;

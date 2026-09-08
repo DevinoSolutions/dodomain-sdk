@@ -208,7 +208,7 @@ function mrneonDeps(log: WalkLog): DiscoveryDeps {
  * Exactly what production does: resolve the owning zone, then discover on it.
  * Kept as a two-step composition rather than one core helper because apps/web
  * must compile (and possibly reject) the session's records against that zone in
- * between, BEFORE any state transition — see apps/web/src/lib/dc-config.ts
+ * between, BEFORE any state transition — see apps/web/src/lib/domain-connect-config.ts
  * `compileRecipeForOwningZone` and the /domain-connect/start route.
  */
 async function discoverOwningZone(fqdn: string, deps: DiscoveryDeps) {

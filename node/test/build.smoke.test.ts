@@ -80,9 +80,26 @@ test("index.d.ts declares the same public names", () => {
     "WebhookEndpointWithSecret",
     "DeleteWebhookEndpointResult",
     "RotateSecretKeyResult",
+    // 0.5.0 (naming batch 8): the canonical name of what sessions.create
+    // returns, plus the deprecated alias an integrator on 0.4.x still imports.
+    "ConnectSessionSummary",
+    "Session",
   ]) {
     assert.ok(dts.includes(name), `index.d.ts missing "${name}"`);
   }
+});
+
+test("index.d.ts keeps the deprecated Session alias, marked @deprecated, pointing at ConnectSessionSummary", () => {
+  const dts = readFileSync(path.join(distDir, "index.d.ts"), "utf8");
+  // The alias is only useful to an integrator if their editor sees the
+  // deprecation — so the JSDoc has to survive dts bundling, not just exist
+  // in src/public-types.ts.
+  const aliasMatch = /@deprecated[^]*?type Session = ConnectSessionSummary;/.exec(dts);
+  assert.ok(aliasMatch, "index.d.ts lost the @deprecated Session = ConnectSessionSummary alias");
+  assert.ok(
+    /interface ConnectSessionSummary \{/.test(dts),
+    "index.d.ts does not declare interface ConnectSessionSummary",
+  );
 });
 
 test("the built package has no unresolved bare @dodomain/core import left over (core is inlined, not a runtime dep)", () => {

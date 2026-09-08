@@ -54,7 +54,7 @@
 
 import { assertHttps } from "./discovery.ts";
 import { signQueryString } from "./sign.ts";
-import type { ApplyUrl } from "./types.ts";
+import type { ApplyUrl } from "./domain-connect-types.ts";
 
 export class ApplyUrlError extends Error {}
 
@@ -112,6 +112,12 @@ export interface BuildApplyUrlInput {
   serviceId: string;
   domain: string;
   host?: string;
+  /**
+   * The template groups to apply (spec `groupId`, comma-delimited) — present
+   * only when the compiled recipe fills a SUBSET of a template's optional
+   * shapes; absent means every group, exactly as the spec defaults.
+   */
+  groupIds?: string[];
   /** Constrained recipe variables only (compiled upstream from records[]). */
   variables: Record<string, string>;
   redirectUri: string;
@@ -163,6 +169,11 @@ export function buildApplyUrl(input: BuildApplyUrlInput): ApplyUrl {
 
   const pairs: Array<[string, string]> = [["domain", input.domain]];
   if (input.host) pairs.push(["host", input.host]);
+  // Inside the signed payload like every other parameter (only sig/key are
+  // excluded from signing) — a tampered group list must fail verification.
+  if (input.groupIds && input.groupIds.length > 0) {
+    pairs.push(["groupId", input.groupIds.join(",")]);
+  }
   for (const [k, v] of Object.entries(input.variables)) pairs.push([k, v]);
   pairs.push(["redirect_uri", input.redirectUri]);
   if (input.state) pairs.push(["state", input.state]);

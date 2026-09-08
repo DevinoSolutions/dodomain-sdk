@@ -27,19 +27,44 @@ const CFG: CfConfig = {
   redirectUri: "http://localhost:8787/oauth/cf/callback",
 };
 
+// The exact request shape the Cloudflare connector builds (see cfApi in
+// src/cloudflare/dns.ts and exchangeCode in oauth.ts): always a plain string
+// header map, and a string body on writes only.
+interface FakeRequest {
+  method: string;
+  headers: Record<string, string>;
+  body?: string;
+}
+
 // Build a fake fetch that records the call and returns a canned JSON response.
-function fakeFetch(handler: (url: string, opts: any) => { status?: number; json: unknown }) {
-  const calls: Array<{ url: string; opts: any }> = [];
-  const impl = (async (url: string, opts: any) => {
+function fakeFetch(
+  handler: (url: string, opts: FakeRequest) => { status?: number; json: unknown },
+) {
+  const calls: Array<{ url: string; opts: FakeRequest }> = [];
+  // The connector reads only `ok`, `status` and `text()` off the Response, so
+  // the double cast is a deliberately narrow test double — not an `any` that
+  // would also hide a mistyped call site.
+  const impl = (async (url: string, opts: FakeRequest) => {
     calls.push({ url, opts });
     const { status = 200, json } = handler(url, opts);
     return {
       ok: status >= 200 && status < 300,
       status,
       text: async () => JSON.stringify(json),
-    } as any;
+    };
   }) as unknown as typeof fetch;
   return { impl, calls };
+}
+
+/** The JSON body the connector actually sent, parsed. Fails loudly if it sent none. */
+function sentBody(opts: FakeRequest): Record<string, unknown> {
+  const raw = opts.body;
+  if (typeof raw !== "string") throw new Error("expected the connector to send a JSON body");
+  const parsed: unknown = JSON.parse(raw);
+  if (parsed === null || typeof parsed !== "object") {
+    throw new Error(`expected a JSON object body, got: ${raw.slice(0, 120)}`);
+  }
+  return parsed as Record<string, unknown>;
 }
 
 // ---- PKCE ----
@@ -156,7 +181,7 @@ test("createRecord: POST dns_records with proxied:false + ttl, returns id", asyn
   const { url, opts } = calls[0]!;
   assert.equal(url, "https://api.cloudflare.com/client/v4/zones/zone-1/dns_records");
   assert.equal(opts.method, "POST");
-  const sent = JSON.parse(opts.body);
+  const sent = sentBody(opts);
   assert.equal(sent.type, "CNAME");
   assert.equal(sent.name, "dodomain-poc.devino.ca");
   assert.equal(sent.content, "t.example");
@@ -180,7 +205,7 @@ test("createRecord: MX writes forward priority in the request body", async () =>
     { type: "MX", name: "customer.com", content: "mx1.example.com", priority: 10 },
     impl,
   );
-  const sent = JSON.parse(calls[0]!.opts.body);
+  const sent = sentBody(calls[0]!.opts);
   assert.equal(sent.type, "MX");
   assert.equal(sent.priority, 10);
 });
@@ -198,7 +223,7 @@ test("createRecord: an AAAA write omits priority (only MX carries it)", async ()
     { type: "AAAA", name: "customer.com", content: "2001:db8::1" },
     impl,
   );
-  const sent = JSON.parse(calls[0]!.opts.body);
+  const sent = sentBody(calls[0]!.opts);
   assert.equal(sent.type, "AAAA");
   assert.equal("priority" in sent, false);
 });

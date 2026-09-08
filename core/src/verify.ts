@@ -7,8 +7,8 @@
 
 import { NODATA, NOTFOUND } from "node:dns";
 import { Resolver } from "node:dns/promises";
-import { recordValueMatches } from "./record-capabilities.ts";
-import type { ExpectedRecord, VerificationResult } from "./types.ts";
+import { recordAnswerMatches } from "./record-capabilities.ts";
+import type { ExpectedRecord, VerificationResult } from "./verify-types.ts";
 import { nearestZoneCut } from "./zone-walk.ts";
 
 // Bounded DNS query defaults applied to BOTH resolvers built below (the public
@@ -37,6 +37,25 @@ export interface DnsResolver {
   resolveCname(host: string): Promise<string[]>;
   resolveMx(host: string): Promise<Array<{ exchange: string; priority: number }>>;
   resolveTxt(host: string): Promise<string[][]>;
+  /**
+   * CAA (RFC 8659) — read ONLY by the TLS-issuance advisories
+   * (tls-issuance-advisories.ts), never by record verification. Node's
+   * Resolver surfaces each record's tag as a keyed field (`issue`, `issuewild`,
+   * `iodef`, …) beside the `critical` flag; a tag c-ares does not know is
+   * dropped before it reaches us, which is why the advisories can't honour
+   * RFC 8659 §4.2's "critical unknown tag ⇒ must not issue" clause.
+   */
+  resolveCaa(host: string): Promise<CaaAnswer[]>;
+}
+
+/** One CAA RR as `node:dns` reports it: the flag byte plus the tag it carried, keyed by tag name. */
+export interface CaaAnswer {
+  critical: number;
+  issue?: string;
+  issuewild?: string;
+  iodef?: string;
+  contactemail?: string;
+  contactphone?: string;
 }
 
 // Builds the "public" recursive resolver — a node:dns/promises Resolver bound to
@@ -176,7 +195,7 @@ async function owningZoneOf(fqdn: string, resolver: DnsResolver): Promise<string
 // resolved" (a distinct failure mode from a DNS error answering the
 // *record* query). Both fold into outcome:"indeterminate" — an
 // unconfirmable check must never read as "absent" (PLAN-F-011 §2c).
-type LookupOutcome =
+export type LookupOutcome =
   { kind: "records"; records: string[] } | { kind: "absent" } | { kind: "error"; code: string };
 
 const NS_RESOLUTION_FAILED = "NS_RESOLUTION_FAILED";
@@ -188,7 +207,11 @@ const NS_RESOLUTION_FAILED = "NS_RESOLUTION_FAILED";
 // "verifies" (F-002 hop 2: the old code mapped MX answers to `exchange` alone,
 // silently dropping `priority`). The encoded string is also what surfaces in
 // VerificationResult.authoritativeFound/publicFound for logs + the verify route.
-async function lookup(
+// Exported (2026-09, public tools) so the DNS-lookup tool (dns-lookup.ts) reads
+// records through the SAME per-type dispatch and error classification the
+// verify engine uses — a second copy of "which resolver call for which type"
+// is how the two would drift.
+export async function lookupRecordAnswers(
   resolver: DnsResolver,
   fqdn: string,
   type: ExpectedRecord["type"],
@@ -220,43 +243,64 @@ async function lookup(
 
 /**
  * Exported for a deterministic unit test (test/verify.test.ts) — no DNS/network.
- * Delegates the value comparison to record-capabilities.ts's recordValueMatches
- * (the ONE home for record-value normalization — TXT exact/case-sensitive,
- * host-like trailing-dot+case-insensitive, MX exchange+priority) so this DNS
- * path and the tier-1 Cloudflare apply path can never drift (D-001).
+ * Delegates the comparison to record-capabilities.ts's recordAnswerMatches,
+ * which sits on the ONE home for record-value normalization (TXT
+ * exact/case-sensitive, host-like trailing-dot+case-insensitive, MX
+ * exchange+priority) so this DNS path and the tier-1 Cloudflare apply path can
+ * never drift (D-001).
  */
 export function matches(found: string[], rec: ExpectedRecord): boolean {
-  return found.some((f) => {
-    if (rec.type === "MX") {
-      // `found` MX entries are encoded "priority exchange" (see lookup()); split
-      // them back so the shared matcher gets the exchange + numeric priority as
-      // separate inputs. A session with NO expected priority (legacy, pre-F-002
-      // guard) compares the exchange alone — recordValueMatches handles that when
-      // expectedPriority is undefined.
-      const m = /^(\d+)\s+(.*)$/.exec(f);
-      const actualPriority = m ? Number(m[1]) : undefined;
-      const actualExchange = m ? m[2]! : f;
-      return recordValueMatches("MX", rec.expect, actualExchange, {
-        expectedPriority: rec.priority,
-        actualPriority,
-      });
-    }
-    return recordValueMatches(rec.type, rec.expect, f);
-  });
+  // Delegates per answer to record-capabilities.ts's recordAnswerMatches, which
+  // owns the "priority exchange" MX wire split this function used to do with an
+  // inline regex. Behaviour is unchanged (same split, same legacy
+  // no-expected-priority fallback); the extraction exists because record-diff.ts
+  // must apply the IDENTICAL comparison to classify a near miss, and a second
+  // copy of the encoding is how the two would drift apart.
+  return found.some((f) => recordAnswerMatches(rec.type, rec.expect, f, rec.priority));
+}
+
+/**
+ * Everything a DNS check needs to know about WHERE to ask for one name: the
+ * zone that owns it, the public recursive resolver, and the zone's
+ * authoritative resolution (or the reason one could not be built).
+ *
+ * Exported because the TLS-issuance advisories (tls-issuance-advisories.ts)
+ * must read CAA and `_acme-challenge` records through the SAME path record
+ * verification uses — the zone walk, the NS→A pin, the bounded timeouts, the
+ * injectable seams — rather than through a second resolver construction that
+ * would drift from this one. `verifyRecord` below is the first caller; its
+ * behaviour is unchanged (this is the extraction of its opening lines).
+ */
+export interface ZoneAuthority {
+  zone: string;
+  /** The public recursive resolver (injected, or the bounded default). */
+  publicResolver: DnsResolver;
+  authoritative: AuthoritativeResolution;
+}
+
+export async function resolveZoneAuthority(
+  fqdn: string,
+  deps: VerifyDeps = {},
+): Promise<ZoneAuthority> {
+  const timeoutMs = deps.dnsTimeoutMs ?? DEFAULT_DNS_TIMEOUT_MS;
+  const tries = deps.dnsTries ?? DEFAULT_DNS_TRIES;
+  const publicResolver = deps.resolver ?? makeBoundedResolver(timeoutMs, tries);
+  const buildAuthoritative =
+    deps.authoritativeResolverFor ??
+    ((zone, r) => authoritativeResolverFor(zone, r, timeoutMs, tries));
+  const zone = deps.zone ?? (await owningZoneOf(fqdn, publicResolver));
+  const authoritative = await buildAuthoritative(zone, publicResolver);
+  return { zone, publicResolver, authoritative };
 }
 
 export async function verifyRecord(
   rec: ExpectedRecord,
   deps: VerifyDeps = {},
 ): Promise<VerificationResult> {
-  const timeoutMs = deps.dnsTimeoutMs ?? DEFAULT_DNS_TIMEOUT_MS;
-  const tries = deps.dnsTries ?? DEFAULT_DNS_TRIES;
-  const resolver = deps.resolver ?? makeBoundedResolver(timeoutMs, tries);
-  const buildAuthoritative =
-    deps.authoritativeResolverFor ??
-    ((zone, r) => authoritativeResolverFor(zone, r, timeoutMs, tries));
-  const zone = deps.zone ?? (await owningZoneOf(rec.fqdn, resolver));
-  const auth = await buildAuthoritative(zone, resolver);
+  const { publicResolver: resolver, authoritative: auth } = await resolveZoneAuthority(
+    rec.fqdn,
+    deps,
+  );
 
   // Anything but a built resolver means the zone's own nameservers were never
   // reached, so the record check couldn't run — grouped with a genuine lookup
@@ -266,10 +310,10 @@ export async function verifyRecord(
   // the domain_not_found branch below.
   const authOutcome: LookupOutcome =
     auth.kind === "resolver"
-      ? await lookup(auth.resolver, rec.fqdn, rec.type)
+      ? await lookupRecordAnswers(auth.resolver, rec.fqdn, rec.type)
       : { kind: "error", code: NS_RESOLUTION_FAILED };
   const nsAbsentCode = auth.kind === "ns_absent" ? auth.code : undefined;
-  const publicOutcome = await lookup(resolver, rec.fqdn, rec.type);
+  const publicOutcome = await lookupRecordAnswers(resolver, rec.fqdn, rec.type);
 
   const authoritativeFound = authOutcome.kind === "records" ? authOutcome.records : [];
   const publicFound = publicOutcome.kind === "records" ? publicOutcome.records : [];
@@ -378,6 +422,7 @@ export async function verifyRecords(
     resolveCname: (host) => resolver.resolveCname(host),
     resolveMx: (host) => resolver.resolveMx(host),
     resolveTxt: (host) => resolver.resolveTxt(host),
+    resolveCaa: (host) => resolver.resolveCaa(host),
   };
 
   const zones = await Promise.all(recs.map((rec) => owningZoneOf(rec.fqdn, walkResolver)));

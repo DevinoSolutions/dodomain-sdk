@@ -10,7 +10,7 @@
 // sends the user down a path that cannot succeed.
 
 import { discover, type DiscoveryResult } from "./discovery.ts";
-import type { DcSettings } from "./types.ts";
+import type { DomainConnectProviderSettings } from "./domain-connect-types.ts";
 import { nearestZoneCut } from "./zone-walk.ts";
 
 export type Tier = 1 | 2 | 3;
@@ -48,7 +48,7 @@ export interface ProviderMatch {
    * that would be a contract change for integrators. This field is internal
    * plumbing between detection and the readiness probe.
    */
-  domainConnectSettings?: DcSettings;
+  domainConnectSettings?: DomainConnectProviderSettings;
 }
 
 // NS suffix → provider. Ordered; first match wins.
@@ -152,7 +152,7 @@ const NS_MAP: Array<{
 // `"domain-connect": 2` routes the NS_MAP rows above with
 // method:"domain-connect" (GoDaddy, IONOS, Vercel, WordPress.com, NameSilo)
 // to tier 2. The tier-2 APPLY path is wired in apps/web behind
-// DODOMAIN_TIER2_DC_ENABLED (2026-07-11 build — the
+// DODOMAIN_DOMAIN_CONNECT_ENABLED (2026-07-11 build — the
 // /domain-connect/{start,callback} routes drive recipes.ts + applyUrl.ts);
 // the connect page shows the one-click CTA only when the detect route's
 // fail-closed domainConnectReady probe also confirms the provider onboarded
@@ -194,7 +194,7 @@ export async function detectProvider(
   // signal. It runs against the OWNING zone — the walk already found it, and
   // a parent zone's Domain Connect endpoint cannot apply records here.
   let dc: ProviderMatch["domainConnect"];
-  let dcSettings: DcSettings | undefined;
+  let dcSettings: DomainConnectProviderSettings | undefined;
   try {
     const res = await discoverFn(zone);
     if (res?.settings?.providerId) {

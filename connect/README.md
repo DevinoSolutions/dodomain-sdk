@@ -1,8 +1,11 @@
 # @dodomain/connect
 
-Embeddable browser widget for [DoDomain](https://dodomain.io). Opens the hosted connect flow
-in a modal iframe and relays its lifecycle events back to your app. Pairs with
-[`@dodomain/node`](../node), which mints the session token on your server.
+Custom domains for SaaS, embedded in your own UI: the official browser widget for
+[DoDomain](https://dodomain.io). Opens the hosted connect flow — one-click Cloudflare OAuth, a
+signed [Domain Connect](https://www.domainconnect.org/) apply where the user's DNS provider
+supports it, guided DNS records everywhere else — in a content-sized modal iframe and relays its
+lifecycle events back to your app. Pairs with [`@dodomain/node`](../node), which mints the
+session token on your server.
 
 📖 **Guide with runnable examples: [dodomain.io/docs/widget](https://dodomain.io/docs/widget)**
 · all docs: [dodomain.io/docs](https://dodomain.io/docs). Using React? [`@dodomain/react`](https://www.npmjs.com/package/@dodomain/react) wraps this widget in a hook.

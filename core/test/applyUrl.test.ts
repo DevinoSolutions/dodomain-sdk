@@ -48,6 +48,30 @@ test("omits host when not provided", () => {
   assert.match(a.payload, /domain=customer\.com&token=abc&redirect_uri=/);
 });
 
+test("groupId rides inside the signed payload as a comma list, and only when a subset is applied", () => {
+  const subset = buildApplyUrl({
+    urlSyncUX: SYNC,
+    providerId: "dodomain.io",
+    serviceId: "apex-a-with-verification",
+    domain: "customer.com",
+    groupIds: ["apex-a", "verify"],
+    variables: { ipv4: "203.0.113.10", token: "abc" },
+    redirectUri: "http://localhost/callback",
+    allowedRedirectHosts: ALLOW,
+  });
+  assert.match(subset.payload, /^domain=customer\.com&groupId=apex-a%2Cverify&ipv4=/);
+  const all = buildApplyUrl({
+    urlSyncUX: SYNC,
+    providerId: "dodomain.io",
+    serviceId: "apex-a-with-verification",
+    domain: "customer.com",
+    variables: { ipv4: "203.0.113.10", ipv6: "2001:db8::10", token: "abc" },
+    redirectUri: "http://localhost/callback",
+    allowedRedirectHosts: ALLOW,
+  });
+  assert.ok(!all.payload.includes("groupId="), "no groupId ⇒ the provider applies every group");
+});
+
 test("url-encodes the redirect_uri", () => {
   const a = buildApplyUrl({
     urlSyncUX: SYNC,

@@ -13,6 +13,7 @@ import type {
   zListConnectionsQuery,
   zProviderGuide,
   zRotateAppSecretKeyInput,
+  zTlsIssuanceAdvisory,
   CheckDomainResponse as CoreCheckDomainResponse,
   CreateSessionResponse as CoreCreateSessionResponse,
   ConnectionSummary as CoreConnectionSummary,
@@ -36,6 +37,7 @@ import type { z } from "zod";
 import type {
   CheckDomainInput,
   CheckDomainResult,
+  ConnectSessionSummary,
   Connection,
   CreateSessionInput,
   DeleteWebhookEndpointResult,
@@ -51,6 +53,7 @@ import type {
   RotateSecretKeyInput,
   RotateSecretKeyResult,
   Session,
+  TlsIssuanceAdvisory,
   VerifyWebhook,
   WebhookEndpoint,
   WebhookEndpointInput,
@@ -68,7 +71,10 @@ type MutuallyAssignable<A, B> = [A] extends [B] ? ([B] extends [A] ? true : fals
 export type SchemaParityPins = [
   Expect<MutuallyAssignable<DnsRecord, SessionRecord>>,
   Expect<MutuallyAssignable<CreateSessionInput, z.infer<typeof zCreateSessionInput>>>,
-  Expect<MutuallyAssignable<Session, CoreCreateSessionResponse>>,
+  Expect<MutuallyAssignable<ConnectSessionSummary, CoreCreateSessionResponse>>,
+  // The deprecated `Session` alias (0.5.0) must stay the SAME type until the
+  // next major removes it — a drift here would silently fork the two names.
+  Expect<MutuallyAssignable<Session, ConnectSessionSummary>>,
   Expect<MutuallyAssignable<VerifyWebhook, typeof coreVerifyWebhook>>,
   // connections namespace (2026-08-17). The list FILTERS pin against z.input,
   // not z.infer: `limit`/`includeDisconnected` carry schema defaults, so the
@@ -88,6 +94,9 @@ export type SchemaParityPins = [
   // lifecycle and key rotation. Same one-schema rule; a route contract that
   // moves without this file moving fails `pnpm typecheck`.
   Expect<MutuallyAssignable<IntegratorSession, CoreIntegratorSession>>,
+  // TLS-issuance advisories (2026-09, Tier-1 #3): the same shape rides on the
+  // session read, the verify response and two webhook payloads — one pin.
+  Expect<MutuallyAssignable<TlsIssuanceAdvisory, z.infer<typeof zTlsIssuanceAdvisory>>>,
   Expect<MutuallyAssignable<ListAppsResult, CoreListAppsResponse>>,
   // The check INPUT pins against z.input: `domain` carries a `.trim()`
   // transform, so z.infer describes what the server sees, not what a caller

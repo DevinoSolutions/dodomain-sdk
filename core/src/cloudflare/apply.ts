@@ -27,6 +27,15 @@
 // record's value, so an apex's SPF/site-verification records never block an
 // ownership token. See the "D-001" and "TXT coexistence" regressions in
 // test/apply.test.ts.
+//
+// SPF is the ONE record that must NOT coexist with itself (RFC 7208 §3.2: two
+// `v=spf1` records at a name are a PermError that fails every sender), so an
+// expected SPF TXT is MERGED into the zone's existing record rather than created
+// beside it — the tier-1 equivalent of what Domain Connect's SPFM type does for
+// us at tier 2, and the same reading the merge-aware verifier already takes
+// (email-records.ts). A name that ALREADY carries two SPF records is never
+// guessed at: apply writes nothing and reports it the way it reports any record
+// it would not write. See the "SPF merge" regressions in test/apply.test.ts.
 
 import { fqdnFor, type SessionRecord } from "../records.ts";
 import {
@@ -35,7 +44,14 @@ import {
   recordValueMatches,
   type RecordType,
 } from "../record-capabilities.ts";
-import { listRecords, createRecord, verifyRecordViaApi, type DnsRecordInput } from "./dns.ts";
+import { emailPolicyKindOf, mergeSpfRecordTerms } from "../email-records.ts";
+import {
+  listRecords,
+  createRecord,
+  updateRecordContent,
+  verifyRecordViaApi,
+  type DnsRecordInput,
+} from "./dns.ts";
 
 export interface ApplyContext {
   /** Cloudflare OAuth access token from the completed grant. */
@@ -80,6 +96,7 @@ export interface ApplySessionRecordsResult {
 export interface ApplySessionRecordsDeps {
   listRecords?: typeof listRecords;
   createRecord?: typeof createRecord;
+  updateRecordContent?: typeof updateRecordContent;
   verifyRecordViaApi?: typeof verifyRecordViaApi;
 }
 
@@ -90,6 +107,7 @@ export async function applySessionRecords(
 ): Promise<ApplySessionRecordsResult> {
   const listRecordsFn = deps.listRecords ?? listRecords;
   const createRecordFn = deps.createRecord ?? createRecord;
+  const updateRecordContentFn = deps.updateRecordContent ?? updateRecordContent;
   const verifyRecordViaApiFn = deps.verifyRecordViaApi ?? verifyRecordViaApi;
 
   const results: RecordApplyResult[] = [];
@@ -126,6 +144,22 @@ export async function applySessionRecords(
     //     reports match:false, which blocks finalize via the `.match` gate.
     //     (Update-on-mismatch is a deliberate NON-goal here — a pending product
     //     decision, not an adjacent-task call.)
+    //
+    // SPF is the ONE documented exception to "never edit an existing record",
+    // because coexistence is what breaks it: a zone may hold only one `v=spf1`
+    // record (RFC 7208 §3.2), and a second one is a PermError that fails EVERY
+    // sender for that domain — so the TXT-coexistence create above was writing
+    // the outage. An expected SPF record is therefore MERGED into the zone's
+    // single existing one (email-records.ts mergeSpfRecordTerms, the same merge
+    // Domain Connect's SPFM type performs for us at tier 2, and the same
+    // semantics the verifier already reads back with). Three cases, no guessing:
+    //   - zero existing SPF records ⇒ create ours, as before;
+    //   - exactly one ⇒ PATCH its content to also carry our mechanism(s);
+    //   - two or more ⇒ the zone is ALREADY in the RFC-7208 broken state and we
+    //     cannot know which record is the live policy: write nothing. The
+    //     read-back below then reports present:true/match:false, which is how
+    //     apply already surfaces a record it would not write, so cf/callback
+    //     raises its CONFLICT notice naming the fqdn and the user consolidates.
     const existing = await listRecordsFn(ctx.token, ctx.zoneId, rec.type, fqdn);
     const alreadyMatching = existing.some((r) =>
       recordValueMatches(rec.type, rec.value, r.content, {
@@ -133,15 +167,42 @@ export async function applySessionRecords(
         actualPriority: r.priority,
       }),
     );
-    if (!alreadyMatching && (existing.length === 0 || allowsCoexistingValues(rec.type))) {
-      const input: DnsRecordInput = {
-        type: rec.type,
-        name: fqdn,
-        content: rec.value,
-        proxied: false,
-      };
-      if (rec.priority !== undefined) input.priority = rec.priority;
-      await createRecordFn(ctx.token, ctx.zoneId, input);
+    // Non-empty only when the session's own value is an SPF record — a
+    // pre-existing SPF beside an ownership token is unrelated and untouched.
+    const existingSpf =
+      emailPolicyKindOf(rec.value) === "spf"
+        ? existing.filter((r) => emailPolicyKindOf(r.content) === "spf")
+        : [];
+    const mergeInto = existingSpf.length === 1 ? existingSpf[0]! : null;
+
+    // `alreadyMatching` covers the SPF no-op too: when the zone's record already
+    // carries our mechanism, recordValueMatches → spfRecordSatisfies is true and
+    // no write of any kind is issued, which is what makes the merge idempotent.
+    if (!alreadyMatching) {
+      if (mergeInto !== null) {
+        const merged = mergeSpfRecordTerms(rec.value, mergeInto.content);
+        // null only when a side is not `v=spf1 …`; both were selected by
+        // emailPolicyKindOf above, so this is the merged record.
+        if (merged !== null) {
+          await updateRecordContentFn(ctx.token, ctx.zoneId, mergeInto.id, {
+            type: rec.type,
+            name: fqdn,
+            content: merged,
+          });
+        }
+      } else if (
+        existingSpf.length === 0 &&
+        (existing.length === 0 || allowsCoexistingValues(rec.type))
+      ) {
+        const input: DnsRecordInput = {
+          type: rec.type,
+          name: fqdn,
+          content: rec.value,
+          proxied: false,
+        };
+        if (rec.priority !== undefined) input.priority = rec.priority;
+        await createRecordFn(ctx.token, ctx.zoneId, input);
+      }
     }
 
     // Read back from Cloudflare (source of truth) and compare presence AND value.

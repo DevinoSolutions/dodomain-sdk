@@ -8,12 +8,16 @@
     ".": "./src/index.ts",
     "./cloudflare": "./src/cloudflare/config.ts",
     "./records": "./src/records.ts",
+    "./domain-connect-templates": "./src/domain-connect-templates.ts",
     "./webhook": "./src/webhook.ts",
     "./schemas": "./src/schemas.ts",
     "./messages": "./src/messages.ts",
     "./message-types": "./src/message-types.ts",
     "./origin": "./src/origin.ts",
-    "./branding": "./src/branding.ts"
+    "./branding": "./src/branding.ts",
+    "./preflight-copy": "./src/preflight-copy.ts",
+    "./spf-types": "./src/spf-types.ts",
+    "./provider-watch": "./src/provider-watch.ts"
   },
   "scripts": {
     "test": "node --experimental-strip-types --test test/*.test.ts",
@@ -27,6 +31,6 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.5",
-    "typescript": "^5.7.3"
+    "typescript": "^7.0.2"
   }
 }

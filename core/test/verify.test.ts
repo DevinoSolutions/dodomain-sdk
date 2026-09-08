@@ -14,7 +14,7 @@ import {
   type DnsResolver,
   type VerifyDeps,
 } from "../src/verify.ts";
-import type { ExpectedRecord } from "../src/types.ts";
+import type { ExpectedRecord } from "../src/verify-types.ts";
 
 const MX: ExpectedRecord = {
   type: "MX",
@@ -67,13 +67,15 @@ test("CNAME/A/AAAA remain exact-match, case/trailing-dot-insensitive (unchanged 
 
 // FIXED(F-011, step 4): TXT was matched by substring ("contains") — a
 // verification token like "TOKEN" would pass inside "othertokenXYZ",
-// weakening the ownership proof. Now exact, case-sensitive (PM-018: no
-// SPF-fragment-merging usage in this codebase — grep-confirmed).
+// weakening the ownership proof. Now exact, case-sensitive for every TXT that
+// is not an email policy. (The original fixture here used an SPF fragment;
+// since Stage 9 an expected `v=spf1 …` is compared as a POLICY — merge-aware,
+// email-records.ts — so the no-substring rule is pinned on a token instead.)
 test("TXT is exact-match, case-sensitive (F-011 — was substring/contains)", () => {
-  const txt: ExpectedRecord = { type: "TXT", fqdn: "acme.com", expect: "v=spf1" };
-  assert.equal(matches(["v=spf1"], txt), true);
+  const txt: ExpectedRecord = { type: "TXT", fqdn: "acme.com", expect: "TOKEN" };
+  assert.equal(matches(["TOKEN"], txt), true);
   // No longer matches merely because the found value CONTAINS the expected token.
-  assert.equal(matches(["v=spf1 include:_spf.example.com ~all"], txt), false);
+  assert.equal(matches(["otherTOKENxyz"], txt), false);
   assert.equal(matches(["v=DMARC1; p=none;"], txt), false);
 
   // Case-sensitivity: verification tokens are case-significant.
@@ -108,6 +110,7 @@ function fakeResolver(overrides: Partial<DnsResolver> = {}): DnsResolver {
     resolveCname: overrides.resolveCname ?? notImplemented("resolveCname"),
     resolveMx: overrides.resolveMx ?? notImplemented("resolveMx"),
     resolveTxt: overrides.resolveTxt ?? notImplemented("resolveTxt"),
+    resolveCaa: overrides.resolveCaa ?? notImplemented("resolveCaa"),
   };
 }
 

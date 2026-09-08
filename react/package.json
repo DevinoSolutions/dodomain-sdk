@@ -1,7 +1,7 @@
 {
   "name": "@dodomain/react",
   "version": "0.1.2",
-  "description": "Official React bindings for DoDomain — a hook (and drop-in button) around the @dodomain/connect modal widget.",
+  "description": "Custom domains for SaaS in React — the official DoDomain bindings: a hook (and drop-in button) around the @dodomain/connect modal widget (Cloudflare one-click, Domain Connect, guided DNS).",
   "license": "MIT",
   "author": "Devino Solutions Inc",
   "homepage": "https://dodomain.io",
@@ -16,7 +16,15 @@
   "keywords": [
     "dodomain",
     "custom-domain",
+    "custom-domains",
+    "custom-domains-for-saas",
+    "saas",
+    "multi-tenant",
+    "white-label",
+    "bring-your-own-domain",
     "domain-connect",
+    "domain-connect-protocol",
+    "domainconnect",
     "dns",
     "react",
     "hooks",
@@ -48,7 +56,8 @@
     "build": "tsup",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test test/*.test.ts",
-    "prepublishOnly": "pnpm run typecheck && pnpm run test && pnpm run build"
+    "prepublishOnly": "pnpm run typecheck && pnpm run test && pnpm run build",
+    "size": "size-limit"
   },
   "peerDependencies": {
     "react": ">=18"
@@ -57,6 +66,7 @@
     "@dodomain/connect": "^0.3.2"
   },
   "devDependencies": {
+    "@size-limit/preset-small-lib": "^13.0.3",
     "@types/jsdom": "^28.0.3",
     "@types/node": "^22.10.5",
     "@types/react": "^19.2.18",
@@ -64,7 +74,19 @@
     "jsdom": "^29.1.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "size-limit": "^13.0.3",
     "tsup": "^8.5.1",
-    "typescript": "^5.7.3"
-  }
+    "typescript": "npm:@typescript/typescript6@^6.0.2"
+  },
+  "size-limit": [
+    {
+      "name": "react bindings (ESM, minified + brotli)",
+      "path": "dist/index.js",
+      "limit": "1.8 kB",
+      "ignore": [
+        "react",
+        "react-dom"
+      ]
+    }
+  ]
 }

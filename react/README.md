@@ -1,9 +1,13 @@
 # @dodomain/react
 
-Official React bindings for [DoDomain](https://dodomain.io) — a hook (and a drop-in button)
-around the [`@dodomain/connect`](https://www.npmjs.com/package/@dodomain/connect) modal widget.
-Pairs with [`@dodomain/node`](https://www.npmjs.com/package/@dodomain/node), which mints the
-session token on your server.
+Custom domains for SaaS, in React: the official bindings for [DoDomain](https://dodomain.io) —
+a hook (and a drop-in button) around the
+[`@dodomain/connect`](https://www.npmjs.com/package/@dodomain/connect) modal widget, which walks
+your customer through a one-click Cloudflare OAuth apply, a signed
+[Domain Connect](https://www.domainconnect.org/) apply where their DNS provider supports it, or
+guided DNS records everywhere else. Pairs with
+[`@dodomain/node`](https://www.npmjs.com/package/@dodomain/node), which mints the session token
+on your server.
 
 📖 **Guide with runnable examples: [dodomain.io/docs/react-sdk](https://dodomain.io/docs/react-sdk)**
 · all docs: [dodomain.io/docs](https://dodomain.io/docs).

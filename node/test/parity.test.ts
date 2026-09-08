@@ -29,6 +29,7 @@ const SESSION: IntegratorSession = {
   createdAt: "2026-08-19T08:00:00.000Z",
   expiresAt: "2026-08-20T08:00:00.000Z",
   expired: false,
+  tlsIssuanceAdvisories: [],
 };
 
 const ENDPOINT: WebhookEndpoint = {
@@ -189,6 +190,7 @@ test("apps.list sends GET /api/v1/apps and returns the apps the credential can s
     sandbox: false,
     logoUrl: null,
     brandColor: null,
+    tlsIssuerCa: null,
     createdAt: "2026-08-19T08:00:00.000Z",
   };
   const { fetchImpl } = recordingFetch(seen, { apps: [app] });

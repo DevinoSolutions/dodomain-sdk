@@ -19,6 +19,14 @@ interface CreateCall {
   priority?: number;
 }
 
+/** A PATCH of an existing record — only the SPF merge issues one. */
+interface UpdateCall {
+  recordId: string;
+  type: string;
+  name: string;
+  content: string;
+}
+
 // `zone`/`live`/`mismatched` are keyed by "type:fqdn" so each fake can vary per
 // record. `zone` maps a key to the record CONTENTS already on Cloudflare — the
 // listRecords fake returns them, so the orchestrator's value-aware create gate
@@ -33,6 +41,7 @@ function fakeDeps(opts: {
   live?: Set<string>;
   mismatched?: Set<string>;
   createCalls?: CreateCall[];
+  updateCalls?: UpdateCall[];
   listCalls?: string[];
 }): ApplySessionRecordsDeps {
   const zone = opts.zone ?? new Map<string, Array<{ content: string; priority?: number }>>();
@@ -55,6 +64,10 @@ function fakeDeps(opts: {
         priority: rec.priority,
       });
       return { id: "rec-new", type: rec.type, name: rec.name, content: rec.content };
+    },
+    updateRecordContent: async (_token, _zoneId, recordId, rec) => {
+      opts.updateCalls?.push({ recordId, type: rec.type, name: rec.name, content: rec.content });
+      return { id: recordId, type: rec.type, name: rec.name, content: rec.content };
     },
     verifyRecordViaApi: async (_token, _zoneId, type, name, expect) => {
       const key = `${type}:${name}`;
@@ -317,5 +330,172 @@ test("D-001: every record present with the CORRECT value ⇒ allLive is true", a
   assert.ok(
     out.results.every((r) => r.match && r.present),
     "all records match AND are present",
+  );
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// SPF merge: a zone may hold only ONE `v=spf1` record (RFC 7208 §3.2) — two
+// of them is a PermError that fails every sender for that domain. The TXT
+// coexistence rule above therefore does NOT apply to SPF: our mechanism goes
+// INTO the zone's record (the tier-1 equivalent of Domain Connect's SPFM),
+// and a name already carrying two SPF records is left alone and reported.
+// These fail against the pre-fix path, which created a second v=spf1 TXT.
+// ─────────────────────────────────────────────────────────────────────────
+
+test("SPF merge: the session's include is PATCHED into the zone's existing v=spf1 record, never added as a second one", async () => {
+  const records: SessionRecord[] = [
+    { type: "TXT", host: "@", value: "v=spf1 include:_spf.integrator.com ~all" },
+  ];
+  const createCalls: CreateCall[] = [];
+  const updateCalls: UpdateCall[] = [];
+  const deps = fakeDeps({
+    zone: new Map([["TXT:customer.com", [{ content: "v=spf1 include:_spf.google.com -all" }]]]),
+    live: new Set(["TXT:customer.com"]), // read-back: the merged record satisfies us
+    createCalls,
+    updateCalls,
+  });
+
+  const out = await applySessionRecords(records, CTX, deps);
+
+  assert.equal(createCalls.length, 0, "no second v=spf1 TXT is ever created");
+  assert.equal(updateCalls.length, 1, "the existing SPF record is edited in place");
+  assert.equal(updateCalls[0]!.recordId, "rec-existing-0", "the PATCH targets the SPF record");
+  assert.equal(
+    updateCalls[0]!.content,
+    "v=spf1 include:_spf.google.com include:_spf.integrator.com -all",
+    "our mechanism is inserted before the terminal all; the zone's -all and its own include survive",
+  );
+  assert.equal(out.allLive, true);
+});
+
+test("SPF merge: an include the zone already publishes writes nothing at all — no PATCH, no create", async () => {
+  const records: SessionRecord[] = [
+    { type: "TXT", host: "@", value: "v=spf1 include:_spf.integrator.com ~all" },
+  ];
+  const createCalls: CreateCall[] = [];
+  const updateCalls: UpdateCall[] = [];
+  const deps = fakeDeps({
+    zone: new Map([
+      [
+        "TXT:customer.com",
+        // The zone's terminal is -all where the session asks for ~all: the
+        // qualifier is the domain owner's, and the mechanism is what we need.
+        [{ content: "v=spf1 include:_spf.google.com include:_spf.integrator.com -all" }],
+      ],
+    ]),
+    live: new Set(["TXT:customer.com"]),
+    createCalls,
+    updateCalls,
+  });
+
+  const out = await applySessionRecords(records, CTX, deps);
+
+  assert.equal(updateCalls.length, 0, "idempotent: the mechanism is already published");
+  assert.equal(createCalls.length, 0);
+  assert.equal(out.allLive, true);
+});
+
+test("SPF merge: a name with no v=spf1 record yet still gets ours created (nothing to merge into)", async () => {
+  const records: SessionRecord[] = [
+    { type: "TXT", host: "@", value: "v=spf1 include:_spf.integrator.com ~all" },
+  ];
+  const createCalls: CreateCall[] = [];
+  const updateCalls: UpdateCall[] = [];
+  const deps = fakeDeps({
+    // Unrelated TXT records at the apex — a bag of tokens, no SPF among them.
+    zone: new Map([["TXT:customer.com", [{ content: "google-site-verification=xyz" }]]]),
+    live: new Set(["TXT:customer.com"]),
+    createCalls,
+    updateCalls,
+  });
+
+  const out = await applySessionRecords(records, CTX, deps);
+
+  assert.equal(updateCalls.length, 0, "nothing existing is rewritten");
+  assert.equal(createCalls.length, 1, "our SPF record is created beside the unrelated tokens");
+  assert.equal(createCalls[0]!.content, "v=spf1 include:_spf.integrator.com ~all");
+  assert.equal(out.allLive, true);
+});
+
+test("SPF merge: unrelated TXT records at the same name are never the merge target", async () => {
+  const records: SessionRecord[] = [
+    { type: "TXT", host: "@", value: "v=spf1 include:_spf.integrator.com ~all" },
+  ];
+  const updateCalls: UpdateCall[] = [];
+  const deps = fakeDeps({
+    zone: new Map([
+      [
+        "TXT:customer.com",
+        [
+          { content: "google-site-verification=xyz" },
+          { content: "v=spf1 -all" },
+          { content: "dodomain-verify=tok-abc123" },
+        ],
+      ],
+    ]),
+    live: new Set(["TXT:customer.com"]),
+    updateCalls,
+  });
+
+  await applySessionRecords(records, CTX, deps);
+
+  assert.equal(updateCalls.length, 1);
+  assert.equal(updateCalls[0]!.recordId, "rec-existing-1", "only the v=spf1 record is edited");
+  assert.equal(updateCalls[0]!.content, "v=spf1 include:_spf.integrator.com -all");
+});
+
+test("SPF merge: an ownership token is still created beside a pre-existing SPF record, which stays untouched", async () => {
+  const records: SessionRecord[] = [
+    { type: "TXT", host: "@", value: "dodomain-verify=tok-abc123" },
+  ];
+  const createCalls: CreateCall[] = [];
+  const updateCalls: UpdateCall[] = [];
+  const deps = fakeDeps({
+    zone: new Map([["TXT:customer.com", [{ content: "v=spf1 include:_spf.google.com -all" }]]]),
+    live: new Set(["TXT:customer.com"]),
+    createCalls,
+    updateCalls,
+  });
+
+  const out = await applySessionRecords(records, CTX, deps);
+
+  assert.equal(updateCalls.length, 0, "a non-SPF session record never edits the zone's SPF");
+  assert.equal(createCalls.length, 1);
+  assert.equal(createCalls[0]!.content, "dodomain-verify=tok-abc123");
+  assert.equal(out.allLive, true);
+});
+
+test("SPF merge: a name already holding TWO v=spf1 records is never guessed between — nothing is written and it reports as a conflict", async () => {
+  const records: SessionRecord[] = [
+    { type: "TXT", host: "@", value: "v=spf1 include:_spf.integrator.com ~all" },
+  ];
+  const createCalls: CreateCall[] = [];
+  const updateCalls: UpdateCall[] = [];
+  const deps = fakeDeps({
+    zone: new Map([
+      [
+        "TXT:customer.com",
+        [
+          { content: "v=spf1 include:_spf.google.com -all" },
+          { content: "v=spf1 include:mail.zoho.com ~all" },
+        ],
+      ],
+    ]),
+    // Neither published record carries our mechanism: present, not matching.
+    mismatched: new Set(["TXT:customer.com"]),
+    createCalls,
+    updateCalls,
+  });
+
+  const out = await applySessionRecords(records, CTX, deps);
+
+  assert.equal(updateCalls.length, 0, "the zone is already RFC-7208 broken; we pick no winner");
+  assert.equal(createCalls.length, 0, "and we never make it worse with a third record");
+  assert.equal(out.allLive, false, "the session cannot finalize until the user consolidates");
+  assert.equal(out.results[0]!.present, true);
+  assert.equal(
+    out.results[0]!.match,
+    false,
+    "present-but-not-matching — the shape cf/callback turns into its CONFLICT notice",
   );
 });

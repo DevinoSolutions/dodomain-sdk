@@ -8,12 +8,34 @@
 // packages/node/src/index.ts) — the schema VALUE (the single source of
 // truth) is exported either way.
 
-import { z } from "zod";
+import { z } from "./zod-runtime.ts";
 
 import { BRAND_COLOR_PATTERN } from "./branding.ts";
+import type { DnsLookupResult, ResolverView } from "./dns-lookup.ts";
+import {
+  DOMAIN_CONNECT_TEMPLATES,
+  type DomainConnectServiceId,
+} from "./domain-connect-templates.ts";
 import type { ProviderGuide } from "./guides.ts";
+import { RECORD_TYPES } from "./record-capabilities.ts";
+import type { CompiledRecipe } from "./recipes.ts";
+import {
+  SPF_ISSUE_CODES,
+  SPF_ISSUE_SEVERITIES,
+  SPF_MECHANISMS,
+  type SpfAnalysis,
+  type SpfIssue,
+  type SpfTerm,
+} from "./spf-types.ts";
 import type { ComposedRecord, RecordHostWarning } from "./records.ts";
 import { zRecord, zRecords } from "./records.ts";
+import {
+  CA_ISSUER_DOMAIN_PATTERN,
+  normalizeCaIssuerDomain,
+  TLS_ISSUANCE_ADVISORY_CODES,
+  TLS_ISSUANCE_ADVISORY_SEVERITIES,
+  type TlsIssuanceAdvisory,
+} from "./tls-issuance-advisory-types.ts";
 
 // ── POST /api/v1/sessions ───────────────────────────────────────────────────
 // Replaces apps/web's local `BodySchema` + the node SDK's hand-typed
@@ -23,9 +45,10 @@ import { zRecord, zRecords } from "./records.ts";
 // A session that parses must be CONNECTABLE. Two shapes used to parse into a
 // dead end and are now rejected up front, because 201 + a connectUrl the user
 // cannot finish is worse than a 400 the integrator sees in development:
-//   • recipe-only. `ConnectSession.recipe` is read by nothing — the tier-2
-//     Domain Connect start route compiles a recipe from the session's RECORDS
-//     (apps/web/src/lib/dc-config.ts), and the docs already say sending a
+//   • recipe-only. `ConnectSession.requestedTemplateId` (the column behind the
+//     wire key `recipe`) is read by nothing — the tier-2 Domain Connect start
+//     route compiles a recipe from the session's RECORDS
+//     (apps/web/src/lib/domain-connect-config.ts), and the docs already say sending a
 //     recipe id does nothing useful today. `records` is therefore required;
 //     `recipe` stays accepted (and stored) for wire-compat, but no longer
 //     substitutes for records.
@@ -140,17 +163,41 @@ export const zCreateSessionResponse = z.object({
 
 export type CreateSessionResponse = z.infer<typeof zCreateSessionResponse>;
 
+// ── TLS-issuance advisories ─────────────────────────────────────────────────
+// The wire shape of one advisory from tls-issuance-advisories.ts (CAA + stale
+// `_acme-challenge` detection, Tier-1 #3). Carried ADDITIVELY on every surface
+// that reports a verify: the verify response, the integrator session read, and
+// the `connection.verified`/`session.completed` webhook payloads. An advisory
+// is advice about the integrator's NEXT step (issuing the certificate) and
+// never changes `verified`/`present` — a consumer that ignores the field sees
+// exactly the pre-advisory contract. `satisfies` binds it to the engine's own
+// type so the two cannot drift.
+export const zTlsIssuanceAdvisory = z.object({
+  code: z.enum(TLS_ISSUANCE_ADVISORY_CODES),
+  /** `warning` = plausibly breaks issuance for this integrator; `info` = a fact we could not turn into a verdict. */
+  severity: z.enum(TLS_ISSUANCE_ADVISORY_SEVERITIES),
+  /** The session record's host the advisory is about. */
+  fqdn: z.string(),
+  /** Where the evidence was read: the CAA owner name (may be a parent), or `_acme-challenge.<fqdn>`. */
+  evidenceFqdn: z.string(),
+  /** The published values behind the verdict, verbatim. */
+  evidence: z.array(z.string()),
+  /** One human-readable sentence. */
+  note: z.string(),
+}) satisfies z.ZodType<TlsIssuanceAdvisory>;
+
 // ── GET /api/v1/sessions/:token ─────────────────────────────────────────────
 // The public session shape — deferred by U1 (PLAN-U1 §9) to F-008. Reserved
 // for future SDK status-polling; today the only caller is apps/web's own test
 // suite (the route's doc-comment is corrected alongside this in the route
 // file itself). `records` is the parsed/typed shape (via
 // apps/web/src/lib/session-records.ts's parseSessionRecords over the DB's
-// `recordsJson` JSON column), not a raw passthrough of that column.
+// `requestedRecords` JSON column), not a raw passthrough of that column.
 export const zPublicSession = z.object({
   id: z.string(),
   domain: z.string(),
   records: zRecords,
+  /** @deprecated Inert: echoed from creation, consumed by nothing (stored as `ConnectSession.requestedTemplateId`). */
   recipe: z.string().nullable(),
   status: z.string(),
   tier: z.number().int().nullable(),
@@ -193,6 +240,7 @@ export const zIntegratorSession = z.object({
   domain: z.string(),
   /** The composed names this session is verified at (see zComposedRecord). */
   records: z.array(zComposedRecord),
+  /** @deprecated Inert: echoed from creation, consumed by nothing (stored as `ConnectSession.requestedTemplateId`). */
   recipe: z.string().nullable(),
   status: z.string(),
   tier: z.number().int().nullable(),
@@ -203,6 +251,12 @@ export const zIntegratorSession = z.object({
   expiresAt: z.iso.datetime(),
   /** DERIVED at read: `expiresAt <= now`. True before the reaper persists `expired`. */
   expired: z.boolean(),
+  /**
+   * The TLS-issuance advisories the LAST verify pass computed for this
+   * session (`ConnectSession.tlsIssuanceAdvisories`) — empty until a verify
+   * has run, and a snapshot of DNS at that moment, not a live read.
+   */
+  tlsIssuanceAdvisories: z.array(zTlsIssuanceAdvisory),
 });
 
 export type IntegratorSession = z.infer<typeof zIntegratorSession>;
@@ -351,6 +405,14 @@ export const zConnectionVerifiedPayload = z.object({
   /** Set on a broken→active recovery — by the re-verify cron, or by a
    * re-finalize that healed the connection (#49); absent on first finalize. */
   recovered: z.boolean().optional(),
+  /**
+   * ADDITIVE (2026-09, Tier-1 #3): the TLS-issuance advisories the finalizing
+   * verify computed — present only when there is at least one, so a receiver
+   * that never heard of them sees the exact pre-advisory body. Advice for the
+   * integrator's next step (issue the certificate); the connection is live
+   * regardless.
+   */
+  tlsIssuanceAdvisories: z.array(zTlsIssuanceAdvisory).optional(),
 });
 export type ConnectionVerifiedPayload = z.infer<typeof zConnectionVerifiedPayload>;
 
@@ -457,6 +519,8 @@ export const zSessionCompletedPayload = z.object({
   sessionId: z.string(),
   /** DomainConnection.id — the connections API's key (F2). */
   connectionId: z.string(),
+  /** ADDITIVE — same field and same rule as zConnectionVerifiedPayload: present only when non-empty. */
+  tlsIssuanceAdvisories: z.array(zTlsIssuanceAdvisory).optional(),
 });
 export type SessionCompletedPayload = z.infer<typeof zSessionCompletedPayload>;
 
@@ -531,7 +595,7 @@ export const zDetectSessionResponse = z.object({
    * path: the flag is on, the session's records compile to one of the two
    * constrained templates, zone discovery succeeded, AND the DNS provider has
    * onboarded our template. Fail-closed best-effort (a hard-capped probe in
-   * the detect route — apps/web/src/lib/dc-config.ts's
+   * the detect route — apps/web/src/lib/domain-connect-config.ts's
    * probeDomainConnectReady): any failure/timeout ⇒ false, so detect never
    * blocks on DC endpoints and the connect flow falls back to manual records.
    * Flag off ⇒ always false (the pre-tier-2 UI, unchanged).
@@ -574,6 +638,117 @@ export const zCheckDomainResponse = z.object({
 });
 
 export type CheckDomainResponse = z.infer<typeof zCheckDomainResponse>;
+
+// ── Domain preflight (dashboard tool + public provider detector) ────────────
+// The detect engine's answer PLUS the two template-support probes the REST
+// check route does not run. ONE shape for the dashboard's preflight inspector
+// (@dodomain/ui/preflight shapes it for BOTH) and the public provider-detector tool
+// (GET /api/public/tools/provider → dodomain.io/tools/provider-detector), so
+// the free tool and the signed-in tool can never disagree about a domain.
+
+/**
+ * Every Domain Connect template DoDomain ships, DERIVED from the registry
+ * (packages/core/src/domain-connect-templates.ts ⇄ docs/domain-connect/templates/)
+ * — never a hand-typed list, so a template added to the registry reaches the
+ * preflight wire shape and every consumer keyed on it without a second edit.
+ * Still pinned to the recipe compiler's own union.
+ */
+export const zDomainConnectServiceId = z.enum(
+  DOMAIN_CONNECT_TEMPLATES.map((template) => template.serviceId) as [
+    DomainConnectServiceId,
+    ...DomainConnectServiceId[],
+  ],
+) satisfies z.ZodType<CompiledRecipe["serviceId"]>;
+
+/**
+ * What the template-support probe found for ONE template. `probed:false`
+ * carries WHY, because "we did not ask" must never render as "not onboarded"
+ * (the honesty rule @dodomain/ui/preflight documents).
+ */
+export const zTemplateProbeOutcome = z.discriminatedUnion("probed", [
+  z.object({ probed: z.literal(true), supported: z.boolean() }),
+  z.object({
+    probed: z.literal(false),
+    reason: z.enum(["not_tier_2", "no_discovery", "flag_off", "probe_failed"]),
+  }),
+]);
+
+export type TemplateProbeOutcome = z.infer<typeof zTemplateProbeOutcome>;
+
+export const zDomainPreflightResponse = zCheckDomainResponse.extend({
+  // One outcome per registry template — zod 4's enum-keyed record is
+  // exhaustive, so a template missing from a response fails validation.
+  templates: z.record(zDomainConnectServiceId, zTemplateProbeOutcome),
+});
+
+export type DomainPreflightResponse = z.infer<typeof zDomainPreflightResponse>;
+
+// ── Public domain tools (GET /api/public/tools/*, dodomain.io/tools/*) ──────
+// Unauthenticated, per-IP + daily-global rate-limited (apps/web lib/api/
+// rate-limit.ts), CORS-pinned to the landing origin. The landing site renders
+// these server-side. Every response is a core engine's own output shape,
+// pinned with `satisfies` so the wire cannot drift from the engine.
+
+/** `?name=&type=` for the DNS lookup. */
+export const zPublicDnsLookupInput = z.object({
+  name: z.string().trim().min(1).max(253),
+  type: z.enum(RECORD_TYPES),
+});
+
+const zResolverView = z.object({
+  resolver: z.string(),
+  address: z.string().nullable(),
+  outcome: z.enum(["answers", "absent", "error"]),
+  answers: z.array(z.string()),
+  error: z.string().optional(),
+}) satisfies z.ZodType<ResolverView>;
+
+export const zPublicDnsLookupResponse = z.object({
+  fqdn: z.string(),
+  type: z.enum(RECORD_TYPES),
+  zone: z.string(),
+  authoritative: zResolverView,
+  public: z.array(zResolverView),
+  /** true = every completed view agrees with the authoritative answer; false = one differs; null = no authoritative view to judge against. */
+  consistent: z.boolean().nullable(),
+}) satisfies z.ZodType<DnsLookupResult>;
+
+export type PublicDnsLookupResponse = z.infer<typeof zPublicDnsLookupResponse>;
+
+const zSpfQualifier = z.enum(["+", "-", "~", "?"]);
+
+const zSpfTerm = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("mechanism"),
+    qualifier: zSpfQualifier,
+    name: z.enum(SPF_MECHANISMS),
+    argument: z.string().nullable(),
+    raw: z.string(),
+  }),
+  z.object({ kind: z.literal("modifier"), name: z.string(), value: z.string(), raw: z.string() }),
+  z.object({ kind: z.literal("unknown"), raw: z.string() }),
+]) satisfies z.ZodType<SpfTerm>;
+
+const zSpfIssue = z.object({
+  code: z.enum(SPF_ISSUE_CODES),
+  severity: z.enum(SPF_ISSUE_SEVERITIES),
+  domain: z.string(),
+  term: z.string().nullable(),
+  note: z.string(),
+}) satisfies z.ZodType<SpfIssue>;
+
+export const zPublicSpfResponse = z.object({
+  domain: z.string(),
+  records: z.array(z.string()),
+  terms: z.array(zSpfTerm),
+  allQualifier: zSpfQualifier.nullable(),
+  dnsLookups: z.number().int().nonnegative(),
+  complete: z.boolean(),
+  visited: z.array(z.string()),
+  issues: z.array(zSpfIssue),
+}) satisfies z.ZodType<SpfAnalysis>;
+
+export type PublicSpfResponse = z.infer<typeof zPublicSpfResponse>;
 
 // ── POST /api/v1/connections/:connectionId/reverify ─────────────────────────
 // 202 body for the on-demand connection re-verify enqueue. `accepted:true` is
@@ -655,6 +830,26 @@ export const zAppBrandingInput = z.object({
 });
 
 export type AppBrandingInput = z.infer<typeof zAppBrandingInput>;
+
+// ── App TLS issuer CA (integrator-supplied) ────────────────────────────────
+// The write boundary for App.tlsIssuerCa (packages/db/prisma/schema.prisma):
+// the CAA issuer-domain of the certificate authority the integrator issues
+// end-user certificates with (`letsencrypt.org`, `pki.goog`, `sectigo.com`).
+// ONE home for the value, ONE normalization (normalizeCaIssuerDomain — the same
+// one the advisory engine compares with). null = not configured: a CAA set is
+// then REPORTED (`caa_restricts_issuance`) rather than judged.
+export const zCaIssuerDomain = z
+  .string()
+  .transform((value) => normalizeCaIssuerDomain(value))
+  .refine((value) => CA_ISSUER_DOMAIN_PATTERN.test(value), {
+    message: "Enter the CA's issuer domain as it appears in CAA records, like letsencrypt.org.",
+  });
+
+export const zAppTlsIssuerCaInput = z.object({
+  tlsIssuerCa: zCaIssuerDomain.nullable(),
+});
+
+export type AppTlsIssuerCaInput = z.infer<typeof zAppTlsIssuerCaInput>;
 
 // ── App allowed origins (integrator-supplied) ───────────────────────────────
 // The write-boundary schema for App.allowedOrigins (packages/db/prisma/
@@ -785,6 +980,8 @@ export const zListAppsResponse = z.object({
       /** Integrator branding (see zAppBrandingInput) — null until configured. */
       logoUrl: z.string().nullable(),
       brandColor: z.string().nullable(),
+      /** The CA issuer-domain end-user certificates are issued with (see zAppTlsIssuerCaInput) — null until configured. */
+      tlsIssuerCa: z.string().nullable(),
       createdAt: z.iso.datetime(),
     }),
   ),
@@ -930,8 +1127,34 @@ export const zVerifySessionResponse = z.object({
       /** DNS error code behind an unconfirmed check — "NS_RESOLUTION_FAILED"/the record
        * query's code on "indeterminate", the apex NS query's code on "domain_not_found". */
       authoritativeError: z.string().optional(),
+      /**
+       * What the zone's OWN nameservers actually answered for this name+type,
+       * verbatim (MX entries are `"${priority} ${exchange}"`). Empty both when
+       * nothing is published and when the lookup didn't complete — `outcome` is
+       * what tells those apart, exactly as it does for `present`.
+       *
+       * Added 2026-08-26: verify has always computed this (it is what `present`
+       * is decided FROM) and every surface discarded it, so an integrator whose
+       * user pasted the wrong value could only relay "not found yet" and watch
+       * them wait for propagation that was never coming. Feed it to
+       * `diffExpectedRecord` (@dodomain/core/records) for the reason, rather than
+       * re-deriving a comparison here — that classifier runs the same matcher
+       * verification itself uses.
+       */
+      authoritativeFound: z.array(z.string()),
+      /** The same answers from a public recursive resolver. Informational: it
+       * never gates `present`, and a set that trails `authoritativeFound` is the
+       * ordinary, healthy meaning of `outcome: "propagating"`. */
+      publicFound: z.array(z.string()),
     }),
   ),
+  /**
+   * TLS-issuance advisories for the TLS-terminating records (A/AAAA/CNAME) of
+   * this session, read on the same pass. Empty means "we looked and found
+   * nothing"; a check that could not complete is itself an entry
+   * (`tls_issuance_unchecked`), never silence. Never an input to `verified`.
+   */
+  advisories: z.array(zTlsIssuanceAdvisory),
 });
 
 export type VerifySessionResponse = z.infer<typeof zVerifySessionResponse>;

@@ -789,7 +789,31 @@ const integratorSession = {
   createdAt: "2026-08-16T09:00:00.000Z",
   expiresAt: "2026-08-17T09:00:00.000Z",
   expired: true,
+  tlsIssuanceAdvisories: [],
 };
+
+test("zIntegratorSession carries the last verify pass's TLS-issuance advisories (Tier-1 #3) — an empty list is a legal 'nothing found / not yet checked'", () => {
+  const parsed = zIntegratorSession.parse({
+    ...integratorSession,
+    tlsIssuanceAdvisories: [
+      {
+        code: "caa_excludes_issuer",
+        severity: "warning",
+        fqdn: "app.customer.com",
+        evidenceFqdn: "customer.com",
+        evidence: ['issue "pki.goog"'],
+        note: "A CAA policy at customer.com allows only pki.goog.",
+      },
+    ],
+  });
+  assert.equal(parsed.tlsIssuanceAdvisories[0]?.code, "caa_excludes_issuer");
+  // An unknown code is refused: the enum is the ONE vocabulary (tls-issuance-advisory-types.ts).
+  const unknownCode = {
+    ...integratorSession,
+    tlsIssuanceAdvisories: [{ ...parsed.tlsIssuanceAdvisories[0], code: "made_up" }],
+  };
+  assert.equal(zIntegratorSession.safeParse(unknownCode).success, false);
+});
 
 test("zIntegratorSession accepts the full session-lifecycle read, expired sessions included — reading a session AFTER expiry is the whole point of this arm", () => {
   const parsed = zIntegratorSession.parse(integratorSession);

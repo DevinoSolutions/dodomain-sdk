@@ -5,7 +5,7 @@
 //      Provider's Domain Connect API. `discover()` is the single-zone
 //      primitive; WHICH zone to call it on is `nearestZoneCut()` in
 //      zone-walk.ts (see the Root Domain note below).
-//   2. GET https://{host}/v2/{domain}/settings  -> DcSettings JSON.
+//   2. GET https://{host}/v2/{domain}/settings  -> DomainConnectProviderSettings JSON.
 //   3. Template support: GET {urlAPI}/v2/domainTemplates/providers/{providerId}/services/{serviceId}
 //      -> 200 supported, 404 not supported.
 //
@@ -25,7 +25,7 @@
 
 import { resolveTxt } from "node:dns/promises";
 
-import type { DcSettings } from "./types.ts";
+import type { DomainConnectProviderSettings } from "./domain-connect-types.ts";
 import type { ZoneWalkDeps } from "./zone-walk.ts";
 
 export class DiscoveryError extends Error {}
@@ -76,7 +76,7 @@ export function templateSupportUrl(urlAPI: string, providerId: string, serviceId
 }
 
 /** Validate and normalise the settings JSON. Throws on missing/invalid required fields. */
-export function parseSettings(json: unknown): DcSettings {
+export function parseSettings(json: unknown): DomainConnectProviderSettings {
   if (typeof json !== "object" || json === null)
     throw new DiscoveryError("settings: not an object");
   const o = json as Record<string, unknown>;
@@ -86,7 +86,7 @@ export function parseSettings(json: unknown): DcSettings {
       throw new DiscoveryError(`settings: missing/invalid "${k}"`);
     return val;
   };
-  const settings: DcSettings = {
+  const settings: DomainConnectProviderSettings = {
     providerId: req("providerId"),
     providerName: req("providerName"),
     urlSyncUX: assertHttps(req("urlSyncUX")),
@@ -120,7 +120,7 @@ async function defaultFetchJson(url: string) {
 export interface DiscoveryResult {
   domain: string;
   providerHost: string;
-  settings: DcSettings;
+  settings: DomainConnectProviderSettings;
 }
 
 /** Full discovery: TXT lookup -> settings fetch -> parsed settings. */
@@ -162,7 +162,7 @@ export async function discover(domain: string, deps: DiscoveryDeps = {}): Promis
 // Callers resolve the zone FIRST and then call `discover(zone, deps)` on it.
 // That split is deliberate rather than a convenience wrapper: apps/web has to
 // validate a session's records against the owning zone in between the two
-// steps, before any state transition (apps/web/src/lib/dc-config.ts
+// steps, before any state transition (apps/web/src/lib/domain-connect-config.ts
 // `compileRecipeForOwningZone`). Discovery never falls back to a parent zone —
 // a zone that doesn't speak Domain Connect means Domain Connect is unavailable
 // for that host, because a parent's provider cannot write records it doesn't
@@ -173,7 +173,7 @@ export async function discover(domain: string, deps: DiscoveryDeps = {}): Promis
 // does NOT walk — `identify_domain_root` is literally
 // `return psl.privatesuffix(domain)`. We extend the root search to the
 // delegated zones the spec's own Root Domain definition names, and keep its
-// host/domain split semantics in the one place that needs them (dc-config.ts's
+// host/domain split semantics in the one place that needs them (domain-connect-config.ts's
 // `zoneRelativeHost`, which uses "@" for the apex as our templates require).
 
 /** Returns true if the DNS Provider supports the given template (200), false on 404. */

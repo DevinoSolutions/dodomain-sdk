@@ -12,6 +12,7 @@
 
 import { randomBytes, createHash } from "node:crypto";
 import { CF_AUTHORIZE_URL, CF_TOKEN_URL, CF_SCOPES, type CfConfig } from "./config.ts";
+import { describeField, readField } from "./upstream-json.ts";
 
 export interface Pkce {
   verifier: string;
@@ -86,7 +87,7 @@ export async function exchangeCode(input: ExchangeInput): Promise<CfTokenRespons
     body: body.toString(),
   });
   const text = await res.text();
-  let json: any;
+  let json: unknown;
   try {
     json = JSON.parse(text);
   } catch {
@@ -94,11 +95,20 @@ export async function exchangeCode(input: ExchangeInput): Promise<CfTokenRespons
       `token endpoint returned non-JSON (HTTP ${res.status}): ${text.slice(0, 200)}`,
     );
   }
-  if (!res.ok || json.error) {
+  const error = readField(json, "error");
+  if (!res.ok || error) {
+    const errorText = describeField(error);
+    const detail = errorText === "" ? text.slice(0, 200) : errorText;
+    const description = describeField(readField(json, "error_description"));
     throw new CfOAuthError(
-      `token exchange failed (HTTP ${res.status}): ${json.error ?? text.slice(0, 200)}${json.error_description ? " — " + json.error_description : ""}`,
+      `token exchange failed (HTTP ${res.status}): ${detail}${description === "" ? "" : " — " + description}`,
     );
   }
-  if (!json.access_token) throw new CfOAuthError("token response missing access_token");
+  const accessToken = readField(json, "access_token");
+  if (typeof accessToken !== "string" || accessToken === "") {
+    throw new CfOAuthError("token response missing access_token");
+  }
+  // access_token is the only field the DNS write depends on and it was just
+  // checked; the rest of the RFC 6749 envelope is informational.
   return json as CfTokenResponse;
 }

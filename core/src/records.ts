@@ -1,15 +1,23 @@
 // Record helpers shared by the API + connect flow: turn a session's simple
 // record list into fully-qualified ExpectedRecords for verification.
 
-import { z } from "zod";
+import { z } from "./zod-runtime.ts";
 
-import type { ExpectedRecord } from "./types.ts";
+import type { ExpectedRecord } from "./verify-types.ts";
 import { isRecordType, RECORD_TYPES } from "./record-capabilities.ts";
 
 // Re-exported so `@dodomain/core/records` (the client-safe subpath) is the one
 // place both the record helpers AND the record-type capability source are
 // available from (F-002 §9 — "no second hardcoded DNS record-type list").
 export * from "./record-capabilities.ts";
+// The expected-vs-published mismatch classifier rides the SAME client-safe
+// subpath: the connect flow renders its verdict in a client component, and it is
+// pure (no node: builtins) for exactly that reason.
+export * from "./record-diff.ts";
+// The SPF/DKIM/DMARC policy semantics the TXT comparison dispatches to — same
+// client-safe subpath, same reason: the connect flow renders the SPF
+// lookup-limit advisory next to a verified record.
+export * from "./email-records.ts";
 
 // F-008: the ONE zod schema for the record SHAPE (the 5-type enum + fields) —
 // replaces the 3 independently hand-copied shapes the finding named (this

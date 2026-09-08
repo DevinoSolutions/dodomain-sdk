@@ -19,7 +19,13 @@ export default defineConfig({
   // "d.ts has no external imports" check in test/build.smoke.test.ts, with
   // src/schema-parity.check.ts pinning those public types to the core zod
   // schemas at typecheck time (F-008: one schema, no silent drift).
-  dts: true,
+  // TypeScript 7 shim (2026-08-26) — same reason as packages/connect: tsup's
+  // dts step hardcodes `baseUrl: compilerOptions.baseUrl || "."`, this
+  // package's `typescript` is pinned to @typescript/typescript6 (typescript@7
+  // ships no JS Compiler API), and TS 6 turns the baseUrl deprecation into the
+  // hard error TS5101. Silences ONLY tsup's injected baseUrl — no tsconfig here
+  // sets one. Delete with the typescript6 pin once tsup supports TypeScript 7.
+  dts: { compilerOptions: { ignoreDeprecations: "6.0" } },
   clean: true,
   sourcemap: true,
   platform: "node",

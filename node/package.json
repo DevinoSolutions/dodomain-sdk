@@ -1,7 +1,7 @@
 {
   "name": "@dodomain/node",
-  "version": "0.4.0",
-  "description": "Official server-side SDK for DoDomain — mint domain-connect sessions and verify signed webhooks.",
+  "version": "0.6.0",
+  "description": "Custom domains for SaaS — the official DoDomain server SDK: mint connect sessions (Cloudflare one-click, Domain Connect, guided DNS), read connections, and verify signed webhooks.",
   "license": "MIT",
   "author": "Devino Solutions Inc",
   "homepage": "https://dodomain.io",
@@ -16,9 +16,19 @@
   "keywords": [
     "dodomain",
     "custom-domain",
+    "custom-domains",
+    "custom-domains-for-saas",
+    "saas",
+    "multi-tenant",
+    "white-label",
+    "bring-your-own-domain",
     "domain-connect",
+    "domain-connect-protocol",
+    "domainconnect",
     "dns",
+    "dns-verification",
     "cname",
+    "webhooks",
     "api",
     "sdk"
   ],
@@ -58,6 +68,6 @@
     "zod": "^4.1.5",
     "tsup": "^8.5.1",
     "@types/node": "^22.10.5",
-    "typescript": "^5.7.3"
+    "typescript": "npm:@typescript/typescript6@^6.0.2"
   }
 }

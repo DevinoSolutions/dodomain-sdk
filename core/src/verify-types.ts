@@ -1,41 +1,10 @@
-// Domain Connect protocol types — fields per draft-ietf-dconn-domainconnect-02
-// and the spec settings/template definitions (verified 2026-06-25).
+// Post-apply DNS verification types — the shapes verify.ts produces and
+// records.ts / record-diff.ts consume. Tier-agnostic: manual, Cloudflare and
+// Domain Connect sessions all verify through these. Split out of the former
+// types.ts (naming batch 3) so the Domain Connect protocol types
+// (domain-connect-types.ts) are not mistaken for the verify vocabulary.
 
 import type { RecordType } from "./record-capabilities.ts";
-
-/** DNS Provider settings JSON returned from /v2/{domain}/settings */
-export interface DcSettings {
-  providerId: string;
-  providerName: string;
-  providerDisplayName?: string;
-  urlSyncUX: string;
-  urlAsyncUX?: string;
-  urlAPI: string;
-  urlControlPanel?: string;
-  width?: number;
-  height?: number;
-  nameServers?: string[];
-}
-
-/** A constrained Domain Connect apply request (NOT arbitrary records). */
-export interface DomainConnectRequest {
-  domain: string;
-  host?: string;
-  template: { providerId: string; serviceId: string };
-  /** Only the variables the chosen recipe defines. */
-  variables: Record<string, string>;
-  redirectUri: string;
-}
-
-/** Result of building an apply URL (kept structured so tests can verify the signed payload). */
-export interface ApplyUrl {
-  url: string;
-  base: string;
-  /** The exact query string that was signed (excludes `key` and `sig`), or the full query when unsigned. */
-  payload: string;
-  sig?: string;
-  keyHost?: string;
-}
 
 /** A single expected DNS record for post-apply verification. */
 export interface ExpectedRecord {
@@ -88,14 +57,4 @@ export interface VerificationResult {
   authoritativeError?: string;
   /** DNS error code when the public-resolver lookup itself failed. Informational only — never gates `present`. */
   publicError?: string;
-}
-
-export interface DcSession {
-  id: string;
-  state: string;
-  domain: string;
-  host?: string;
-  template: { providerId: string; serviceId: string };
-  createdAt: number;
-  expiresAt: number;
 }

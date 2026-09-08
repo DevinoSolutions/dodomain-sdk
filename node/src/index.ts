@@ -30,6 +30,7 @@ import type { z } from "zod";
 import type {
   CheckDomainInput,
   CheckDomainResult,
+  ConnectSessionSummary,
   Connection,
   CreateSessionInput,
   DeleteWebhookEndpointResult,
@@ -42,7 +43,6 @@ import type {
   ReverifyConnectionResult,
   RotateSecretKeyInput,
   RotateSecretKeyResult,
-  Session,
   VerifyWebhook,
   WebhookEndpoint,
   WebhookEndpointInput,
@@ -63,6 +63,7 @@ export type {
   CheckDomainInput,
   CheckDomainResult,
   ComposedDnsRecord,
+  ConnectSessionSummary,
   Connection,
   ConnectionStatus,
   CreateSessionInput,
@@ -82,8 +83,8 @@ export type {
   ReverifyConnectionResult,
   RotateSecretKeyInput,
   RotateSecretKeyResult,
-  Session,
   SessionWarning,
+  TlsIssuanceAdvisory,
   WebhookEndpoint,
   WebhookEndpointInput,
   WebhookEndpointWithSecret,
@@ -91,11 +92,15 @@ export type {
   WebhookEventType,
   WebhookEventWire,
 } from "./public-types.ts";
-// Back-compat aliases for the pre-F-008 public names — same types, second
-// spelling, never a second copy.
+// Back-compat aliases — same types, second spelling, never a second copy.
+// `SessionRecord`/`CreateSessionResponse` are the pre-F-008 names;
+// `Session` is the pre-0.5.0 name of ConnectSessionSummary (naming batch 8:
+// it was the third meaning of "session" in this codebase). `Session` carries
+// @deprecated JSDoc on the source type; all three go away in the next major.
 export type {
   DnsRecord as SessionRecord,
-  Session as CreateSessionResponse,
+  ConnectSessionSummary as CreateSessionResponse,
+  Session,
 } from "./public-types.ts";
 
 // FIX(F-010): re-exported so an integrator needs only this ONE package to
@@ -183,7 +188,7 @@ export class DoDomain {
   }
 
   readonly sessions = {
-    create: async (input: CreateSessionInput): Promise<Session> => {
+    create: async (input: CreateSessionInput): Promise<ConnectSessionSummary> => {
       // Validate the caller's own input against the SAME schema the server
       // enforces, before it ever crosses the network — a bad call fails fast
       // with a DoDomainError (status 0: no request was sent), not a round
