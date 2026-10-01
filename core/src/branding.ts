@@ -102,3 +102,60 @@ export function brandMarkForeground(brandColor: string): string | null {
   if (onWhite === null || onInk === null) return null;
   return onWhite >= onInk ? WHITE : INK;
 }
+
+// ── White-label connect-flow controls (2026-09-22, Pro and Scale) ───────────
+// The zod-free half of the App.connect* columns: the font presets and the copy
+// length limits, here so BOTH the write-boundary schema (schemas.ts
+// zAppBrandingInput) and client code (the dashboard form's maxLength, the
+// hosted page's font stack) read the same numbers without pulling zod into a
+// client bundle. Which plans may SET these is @dodomain/plans'
+// `whiteLabelConnectFlow` flag, enforced in apps/web/src/lib/plan-features.ts.
+
+/** Longest accepted value per white-label copy field (characters, after trim). */
+export const CONNECT_COPY_MAX_LENGTH = {
+  headline: 80,
+  subheadline: 200,
+  successCtaLabel: 40,
+} as const;
+
+/**
+ * The font presets an integrator may pick for their connect flow. SYSTEM font
+ * stacks only — never a remote font: the hosted page's CSP pins `font-src` to
+ * 'self' (packages/security-headers), and an integrator-chosen web-font URL
+ * would also be a tracking beacon on an end user's capability-token page.
+ * Must equal the Prisma `ConnectFontPreset` enum (sync-tested in
+ * apps/web/test/connect-branding.test.ts). `null` on the column = the house
+ * font, unchanged.
+ */
+export const CONNECT_FONT_PRESETS = ["system", "humanist", "serif", "rounded"] as const;
+export type ConnectFontPreset = (typeof CONNECT_FONT_PRESETS)[number];
+
+/** Dashboard label + the CSS font-family stack for each preset. */
+export const CONNECT_FONT_PRESET_STYLES: Record<
+  ConnectFontPreset,
+  { label: string; fontFamily: string }
+> = {
+  system: {
+    label: "System UI",
+    fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  humanist: {
+    label: "Humanist sans",
+    fontFamily:
+      'Seravek, "Gill Sans Nova", Ubuntu, Calibri, "DejaVu Sans", source-sans-pro, sans-serif',
+  },
+  serif: {
+    label: "Serif",
+    fontFamily: 'Charter, "Bitstream Charter", "Sitka Text", Cambria, Georgia, serif',
+  },
+  rounded: {
+    label: "Rounded",
+    fontFamily:
+      'ui-rounded, "Hiragino Maru Gothic ProN", Quicksand, Comfortaa, Manjari, "Arial Rounded MT", "Arial Rounded MT Bold", Calibri, source-sans-pro, sans-serif',
+  },
+};
+
+/** Narrowing guard for a stored/submitted preset value (unknown → false). */
+export function isConnectFontPreset(value: string): value is ConnectFontPreset {
+  return (CONNECT_FONT_PRESETS as readonly string[]).includes(value);
+}

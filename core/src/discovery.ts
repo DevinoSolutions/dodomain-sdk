@@ -23,8 +23,7 @@
 // guard webhook delivery uses); this library stays framework-free and can't own
 // undici/node:dns policy itself. Enforced by scripts/check-discovery-guard-bans.sh.
 
-import { resolveTxt } from "node:dns/promises";
-
+import { sharedBoundedResolver } from "./dns-defaults.ts";
 import type { DomainConnectProviderSettings } from "./domain-connect-types.ts";
 import type { ZoneWalkDeps } from "./zone-walk.ts";
 
@@ -102,6 +101,10 @@ export function parseSettings(json: unknown): DomainConnectProviderSettings {
 }
 
 export interface DiscoveryDeps extends ZoneWalkDeps {
+  /** `_domainconnect` TXT lookup; defaults to the BOUNDED node:dns resolver
+   * (dns-defaults.ts). The name queried is a stranger's zone, so an
+   * unresponsive nameserver here is an ordinary condition, not an anomaly —
+   * on node's unbounded default it cost ~30 s of a request thread. */
   resolveTxt?: (host: string) => Promise<string[][]>;
   fetchJson?: (url: string) => Promise<{ ok: boolean; status: number; json: unknown }>;
 }
@@ -125,7 +128,7 @@ export interface DiscoveryResult {
 
 /** Full discovery: TXT lookup -> settings fetch -> parsed settings. */
 export async function discover(domain: string, deps: DiscoveryDeps = {}): Promise<DiscoveryResult> {
-  const txt = deps.resolveTxt ?? resolveTxt;
+  const txt = deps.resolveTxt ?? ((host: string) => sharedBoundedResolver().resolveTxt(host));
   const fetchJson = deps.fetchJson ?? defaultFetchJson;
 
   let records: string[][];

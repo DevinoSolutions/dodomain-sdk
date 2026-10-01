@@ -252,6 +252,15 @@ export interface App {
   /** Integrator branding; null until configured. */
   logoUrl: string | null;
   brandColor: string | null;
+  /** White-label connect-flow settings (Pro and Scale), as stored; null until configured.
+   * They render on the hosted connect flow only while your plan includes white-label. */
+  connectHeadline: string | null;
+  connectSubheadline: string | null;
+  connectSuccessCtaLabel: string | null;
+  /** Where the success button goes when a session has no `returnUrl` of its own. */
+  connectSuccessRedirectUrl: string | null;
+  connectFontPreset: "system" | "humanist" | "serif" | "rounded" | null;
+  hideConnectFooterHelp: boolean;
   /** The CAA issuer-domain your certificates are issued with (e.g. `letsencrypt.org`);
    * null until configured in the dashboard. Drives `caa_excludes_issuer` advisories. */
   tlsIssuerCa: string | null;
@@ -332,6 +341,12 @@ export interface WebhookEndpoint {
   /** The NORMALIZED url stored for the endpoint, not the raw input string. */
   url: string;
   createdAt: string;
+  /** When the endpoint was auto-paused (no successful delivery for 7 days and
+   * at least 5 dead-lettered deliveries in that span), or null while it is
+   * delivering. Paused endpoints record new events as skipped and send
+   * nothing until `webhookEndpoints.resume` (or an `update` that changes the
+   * url). */
+  pausedAt: string | null;
 }
 
 /** Result of webhookEndpoints.list (pin: core zListWebhookEndpointsResponse). */

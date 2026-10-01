@@ -21,6 +21,12 @@ export * from "./tls-issuance-advisory-types.ts";
 export * from "./spf.ts";
 export * from "./spf-types.ts";
 export * from "./dns-lookup.ts";
+// "Is this name answering from a CDN proxy's edge?" — the classifier over the
+// vendored ranges (cdn-proxy-ranges.ts, also "@dodomain/core/cdn-proxy-ranges"
+// for client bundles) and its authoritative A/AAAA observation. Read by the
+// post-connect re-check only; initial verification stays strict.
+export * from "./cdn-proxy.ts";
+export * from "./cdn-proxy-ranges.ts";
 // The preflight honesty copy (also "@dodomain/core/preflight-copy" for client bundles).
 export * from "./preflight-copy.ts";
 // The nightly provider-watch snapshot shape (also "@dodomain/core/provider-watch").

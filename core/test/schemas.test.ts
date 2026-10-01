@@ -23,6 +23,7 @@ import {
   zPublicSession,
   zReverifyConnectionResponse,
   zSessionAbandonedPayload,
+  zSharedSetupLinkResponse,
   zSessionCompletedPayload,
   zWebhookEvent,
   zWebhookEventType,
@@ -764,6 +765,19 @@ test("zDetectSessionResponse requires zone + domainConnectReady and allows a nul
   assert.equal(zDetectSessionResponse.safeParse(withoutZone).success, false);
   const { domainConnectReady: _ready, ...withoutReady } = payload;
   assert.equal(zDetectSessionResponse.safeParse(withoutReady).success, false);
+});
+
+test("zSharedSetupLinkResponse pins the mint body to a non-empty setupUrl plus an ISO expiresAt (the session's), nothing else required", () => {
+  const ok = {
+    setupUrl: "https://app.dodomain.io/setup/dd_sl_abc",
+    expiresAt: "2026-09-06T09:00:00.000Z",
+  };
+  assert.equal(zSharedSetupLinkResponse.safeParse(ok).success, true);
+  assert.equal(zSharedSetupLinkResponse.safeParse({ ...ok, setupUrl: "" }).success, false);
+  assert.equal(zSharedSetupLinkResponse.safeParse({ ...ok, expiresAt: "tomorrow" }).success, false);
+  // The dd_sess_ token has no field here BY DESIGN — the whole point of the
+  // link is that it can be forwarded without handing over the session.
+  assert.equal(zSharedSetupLinkResponse.safeParse({ setupUrl: ok.setupUrl }).success, false);
 });
 
 test("zReverifyConnectionResponse pins the 202 body to {accepted:true}", () => {

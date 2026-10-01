@@ -18,7 +18,7 @@
 // (default: a bounded node:dns/promises Resolver pinned to one address) so a
 // unit test never opens a socket.
 
-import { Resolver } from "node:dns/promises";
+import { boundedResolver, DEFAULT_DNS_TIMEOUT_MS, DEFAULT_DNS_TRIES } from "./dns-defaults.ts";
 import type { RecordType } from "./record-capabilities.ts";
 import {
   lookupRecordAnswers,
@@ -33,9 +33,6 @@ export const PUBLIC_RESOLVERS = [
   { name: "Google", address: "8.8.8.8" },
   { name: "Quad9", address: "9.9.9.9" },
 ] as const;
-
-const DEFAULT_DNS_TIMEOUT_MS = 5000;
-const DEFAULT_DNS_TRIES = 2;
 
 export interface DnsLookupDeps extends VerifyDeps {
   /** Builds the resolver for one public address (default: a bounded Resolver pinned to it). */
@@ -112,7 +109,7 @@ export async function lookupRecordAcrossResolvers(
   const publicResolverFor =
     deps.publicResolverFor ??
     ((address: string): DnsResolver => {
-      const r = new Resolver({ timeout: timeoutMs, tries });
+      const r = boundedResolver(timeoutMs, tries);
       r.setServers([address]);
       return r;
     });

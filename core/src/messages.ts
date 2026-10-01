@@ -30,11 +30,22 @@ import {
   EMBED_VALUE,
   MESSAGE_TYPES,
   ORIGIN_PARAM,
+  POPUP_HANDOFF_CHANNEL_PREFIX,
   THEME_PARAM,
+  popupHandoffChannelName,
   type DoDomainMessage,
 } from "./message-types.ts";
 
-export { EMBED_PARAM, EMBED_VALUE, MESSAGE_TYPES, ORIGIN_PARAM, THEME_PARAM, type DoDomainMessage };
+export {
+  EMBED_PARAM,
+  EMBED_VALUE,
+  MESSAGE_TYPES,
+  ORIGIN_PARAM,
+  POPUP_HANDOFF_CHANNEL_PREFIX,
+  THEME_PARAM,
+  popupHandoffChannelName,
+  type DoDomainMessage,
+};
 
 // `z.ZodType<DoDomainMessage>` pins this schema's inferred type to the
 // independently hand-written DoDomainMessage (message-types.ts) — if the two
@@ -46,4 +57,9 @@ export const zDoDomainMessage: z.ZodType<DoDomainMessage> = z.discriminatedUnion
   z.object({ type: z.literal(MESSAGE_TYPES.READY) }),
   z.object({ type: z.literal(MESSAGE_TYPES.ERROR), code: z.string() }),
   z.object({ type: z.literal(MESSAGE_TYPES.HEIGHT), height: z.number() }),
+  z.object({
+    type: z.literal(MESSAGE_TYPES.POPUP_VERIFIED),
+    token: z.string(),
+    domain: z.string(),
+  }),
 ]);

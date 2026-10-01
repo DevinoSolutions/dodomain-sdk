@@ -6,20 +6,15 @@
 // a public resolver for propagation UX.
 
 import { NODATA, NOTFOUND } from "node:dns";
-import { Resolver } from "node:dns/promises";
+import { boundedResolver, DEFAULT_DNS_TIMEOUT_MS, DEFAULT_DNS_TRIES } from "./dns-defaults.ts";
 import { recordAnswerMatches } from "./record-capabilities.ts";
 import type { ExpectedRecord, VerificationResult } from "./verify-types.ts";
 import { nearestZoneCut } from "./zone-walk.ts";
 
-// Bounded DNS query defaults applied to BOTH resolvers built below (the public
-// recursive resolver AND the authoritative-NS-pinned one). Without a cap, a
-// black-holed nameserver hangs the request thread on c-ares' generous defaults
-// (seconds per try × tries) — an unbounded stall on a hostile/broken zone. 5s ×
-// 2 tries bounds a single verifyRecord's worst case. These are DEFAULTS,
-// overridable per call via VerifyDeps: packages/core takes config as ARGUMENTS,
-// never reading process.env (scripts/check-core-config-bans.sh).
-const DEFAULT_DNS_TIMEOUT_MS = 5000;
-const DEFAULT_DNS_TRIES = 2;
+// The bounded DNS defaults applied to BOTH resolvers built below (the public
+// recursive resolver AND the authoritative-NS-pinned one) now live in
+// dns-defaults.ts, which is also what the zone walk and Domain Connect
+// discovery use — one pair of numbers for the whole package.
 
 /**
  * The subset of `node:dns/promises` verify.ts needs, as an injectable seam —
@@ -67,7 +62,7 @@ export interface CaaAnswer {
 // satisfies DnsResolver (all resolve* methods return promises), so it is
 // returned directly — same as the authoritative resolver below.
 function makeBoundedResolver(timeoutMs: number, tries: number): DnsResolver {
-  return new Resolver({ timeout: timeoutMs, tries });
+  return boundedResolver(timeoutMs, tries);
 }
 
 /**
@@ -129,7 +124,7 @@ async function authoritativeResolverFor(
     }
   }
   if (!ips.length) return { kind: "ns_unresolvable" };
-  const r = new Resolver({ timeout: timeoutMs, tries });
+  const r = boundedResolver(timeoutMs, tries);
   r.setServers(ips);
   return { kind: "resolver", resolver: r };
 }

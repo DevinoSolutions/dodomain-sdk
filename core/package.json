@@ -3,21 +3,27 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "sideEffects": false,
+  "sideEffects": [
+    "./src/zod-runtime.ts"
+  ],
   "exports": {
     ".": "./src/index.ts",
     "./cloudflare": "./src/cloudflare/config.ts",
     "./records": "./src/records.ts",
     "./domain-connect-templates": "./src/domain-connect-templates.ts",
+    "./guides": "./src/guides.ts",
     "./webhook": "./src/webhook.ts",
     "./schemas": "./src/schemas.ts",
     "./messages": "./src/messages.ts",
     "./message-types": "./src/message-types.ts",
+    "./team-grant": "./src/team-grant.ts",
     "./origin": "./src/origin.ts",
     "./branding": "./src/branding.ts",
     "./preflight-copy": "./src/preflight-copy.ts",
     "./spf-types": "./src/spf-types.ts",
-    "./provider-watch": "./src/provider-watch.ts"
+    "./provider-watch": "./src/provider-watch.ts",
+    "./cdn-proxy-ranges": "./src/cdn-proxy-ranges.ts",
+    "./zod-runtime": "./src/zod-runtime.ts"
   },
   "scripts": {
     "test": "node --experimental-strip-types --test test/*.test.ts",

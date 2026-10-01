@@ -45,10 +45,10 @@
 //   core stays framework- and env-free. Name-filtering providers (the reference
 //   implementation, and anything conformant) are order-insensitive and accept
 //   either, so the default remains correct for every provider not in the table.
-//   TODO(scope): the "key-then-sig" branch is unit-proven only. Cloudflare
-//   hand-curates its Domain Connect allow-list and our templates still 404
-//   there, so nothing has ever exercised sig-last against a live zone — re-prove
-//   it end to end when Cloudflare onboards us. Nothing here enables Cloudflare.
+//   The "key-then-sig" branch is PROVEN live: Cloudflare accepted it on real
+//   applies of both shipped templates on 2026-09-25, and switched all five
+//   DoDomain templates to live mode the same day (.claude/rules/
+//   domain-connect-tier2.md).
 //
 // SECURITY: `redirect_uri` is validated against an allowlist to prevent open redirects.
 

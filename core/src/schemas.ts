@@ -10,7 +10,7 @@
 
 import { z } from "./zod-runtime.ts";
 
-import { BRAND_COLOR_PATTERN } from "./branding.ts";
+import { BRAND_COLOR_PATTERN, CONNECT_COPY_MAX_LENGTH, CONNECT_FONT_PRESETS } from "./branding.ts";
 import type { DnsLookupResult, ResolverView } from "./dns-lookup.ts";
 import {
   DOMAIN_CONNECT_TEMPLATES,
@@ -28,6 +28,11 @@ import {
   type SpfTerm,
 } from "./spf-types.ts";
 import type { ComposedRecord, RecordHostWarning } from "./records.ts";
+import {
+  DODOMAIN_TEAM_HEADER,
+  TEAM_GRANT_SELECTION_FIELD,
+  type TeamGrantSelection,
+} from "./team-grant.ts";
 import { zRecord, zRecords } from "./records.ts";
 import {
   CA_ISSUER_DOMAIN_PATTERN,
@@ -824,9 +829,67 @@ const zBrandColor = z.string().trim().regex(BRAND_COLOR_PATTERN, {
   message: "Brand color must be a 6-digit hex like #0E6B4E.",
 });
 
+// White-label connect-flow copy (2026-09-22, Pro and Scale — the plan gate is
+// apps/web/src/lib/plan-features.ts, not this schema). Rendered to END USERS as
+// plain React text (never HTML), so the only rules are length and "one line":
+// a newline or other control character in a headline is always a paste
+// accident, and rejecting it beats rendering a layout the integrator never saw
+// in the preview.
+function zConnectCopy(label: string, max: number) {
+  return z
+    .string()
+    .trim()
+    .min(1, { message: `${label} can't be blank — clear it instead.` })
+    .max(max, { message: `${label} is too long (${max} characters max).` })
+    .refine((value) => !/\p{Cc}/u.test(value), {
+      message: `${label} must be a single line of text.`,
+    });
+}
+
+// Where the hosted flow's success button goes when the session itself carries
+// no `returnUrl` (a per-session returnUrl always wins). Same rules as logoUrl —
+// https-only, no embedded credentials — because it is integrator-supplied and
+// an end user clicks it.
+const zConnectSuccessRedirectUrl = z
+  .string()
+  .trim()
+  .max(2048, { message: "Success redirect URL is too long (2048 characters max)." })
+  .url({ message: "Success redirect URL must be a valid URL." })
+  .refine(
+    (value) => {
+      try {
+        return new URL(value).protocol === "https:" && !hasEmbeddedCredentials(value);
+      } catch {
+        return false;
+      }
+    },
+    { message: "Success redirect URL must be https:// (no embedded credentials)." },
+  );
+
+// logoUrl + brandColor are free on every plan and always sent. The six
+// white-label fields are OPTIONAL: absent = leave the column alone (a free
+// team's form never sends them), null/false = clear. The plan verdict refuses a
+// non-empty value for a team without `whiteLabelConnectFlow`
+// (apps/web/src/lib/plan-features.ts checkWhiteLabelWrite).
 export const zAppBrandingInput = z.object({
   logoUrl: zLogoUrl.nullable(),
   brandColor: zBrandColor.nullable(),
+  connectHeadline: zConnectCopy("Headline", CONNECT_COPY_MAX_LENGTH.headline).nullable().optional(),
+  connectSubheadline: zConnectCopy("Subheadline", CONNECT_COPY_MAX_LENGTH.subheadline)
+    .nullable()
+    .optional(),
+  connectSuccessCtaLabel: zConnectCopy(
+    "Success button label",
+    CONNECT_COPY_MAX_LENGTH.successCtaLabel,
+  )
+    .nullable()
+    .optional(),
+  connectSuccessRedirectUrl: zConnectSuccessRedirectUrl.nullable().optional(),
+  connectFontPreset: z
+    .enum(CONNECT_FONT_PRESETS, { message: "Pick one of the listed fonts." })
+    .nullable()
+    .optional(),
+  hideConnectFooterHelp: z.boolean().optional(),
 });
 
 export type AppBrandingInput = z.infer<typeof zAppBrandingInput>;
@@ -980,6 +1043,15 @@ export const zListAppsResponse = z.object({
       /** Integrator branding (see zAppBrandingInput) — null until configured. */
       logoUrl: z.string().nullable(),
       brandColor: z.string().nullable(),
+      /** White-label connect-flow settings (see zAppBrandingInput) — the STORED values, null until
+       * configured. They render only while the team's plan includes the white-label connect flow
+       * (Pro and Scale); a downgraded team keeps them stored but its end users see the defaults. */
+      connectHeadline: z.string().nullable(),
+      connectSubheadline: z.string().nullable(),
+      connectSuccessCtaLabel: z.string().nullable(),
+      connectSuccessRedirectUrl: z.string().nullable(),
+      connectFontPreset: z.enum(CONNECT_FONT_PRESETS).nullable(),
+      hideConnectFooterHelp: z.boolean(),
       /** The CA issuer-domain end-user certificates are issued with (see zAppTlsIssuerCaInput) — null until configured. */
       tlsIssuerCa: z.string().nullable(),
       createdAt: z.iso.datetime(),
@@ -988,6 +1060,60 @@ export const zListAppsResponse = z.object({
 });
 
 export type ListAppsResponse = z.infer<typeof zListAppsResponse>;
+
+// ── Which team an OAuth caller acts on (multi-team grants, 2026-09-27) ──────
+// One OAuth approval can cover several of the approving user's teams, or all of
+// them (apps/web/src/lib/oauth-team-grant.ts writes it; the kernel,
+// apps/web/src/lib/api/auth.ts, resolves the team per call). These are the wire
+// pieces the producer (the consent card, the MCP tools) and the consumer (the
+// consent route, the kernel) share. The header name, the body field name and
+// the selection's type live in the zod-free ./team-grant.ts (the consent card
+// imports them without zod) and are re-exported here unchanged. A `dd_sk_`
+// secret key is bound to one team, and a header naming any other team is
+// refused exactly like an unknown one.
+export { DODOMAIN_TEAM_HEADER, TEAM_GRANT_SELECTION_FIELD, type TeamGrantSelection };
+
+/**
+ * The validator for a TeamGrantSelection. `maxTeams` is the app's per-user
+ * membership cap (apps/web/src/lib/team.ts MAX_TEAM_MEMBERSHIPS_PER_USER),
+ * passed in because core never imports the app. Membership is NOT checked
+ * here; the consent hook checks every id against live TeamMember rows before
+ * anything is written. The return annotation pins the inferred shape to the
+ * hand-written type in ./team-grant.ts — drift fails to typecheck.
+ */
+export function teamGrantSelectionSchema(maxTeams: number): z.ZodType<TeamGrantSelection> {
+  return z.discriminatedUnion("mode", [
+    z.object({ mode: z.literal("all") }).strict(),
+    z
+      .object({
+        mode: z.literal("teams"),
+        teamIds: z
+          .array(z.string().min(1).max(64))
+          .min(1, { message: "Choose at least one team." })
+          .max(maxTeams)
+          .refine((ids) => new Set(ids).size === ids.length, {
+            message: "Each team may be listed once.",
+          }),
+      })
+      .strict(),
+  ]);
+}
+
+// ── GET /api/v1/teams ───────────────────────────────────────────────────────
+// The teams the CALLER may act on: for an OAuth token, its grant's teams
+// intersected with the user's live memberships; for a `dd_sk_` key, the key's
+// one team. Ids are what DODOMAIN_TEAM_HEADER (and the MCP tools' `teamId`)
+// take. Nothing else about a team (plan, members, billing) is exposed here.
+export const zListTeamsResponse = z.object({
+  teams: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+    }),
+  ),
+});
+
+export type ListTeamsResponse = z.infer<typeof zListTeamsResponse>;
 
 // ── GET /api/v1/connections ─────────────────────────────────────────────────
 // The route (apps/web/src/app/api/v1/connections/route.ts, W4 MCP Phase 2)
@@ -1159,6 +1285,21 @@ export const zVerifySessionResponse = z.object({
 
 export type VerifySessionResponse = z.infer<typeof zVerifySessionResponse>;
 
+// ── POST /api/v1/sessions/:token/shared-setup-link ──────────────────────────
+// The shared setup link (Stage 9 wave 2, WS-F): a second, NARROWER capability
+// URL onto one session — the exact records plus a Verify button, for the DNS
+// admin who did not start the flow. No one-click, no return into the
+// integrator. `setupUrl` carries the `dd_sl_` token; re-minting ROTATES it
+// (the previous link stops resolving), so there is never more than one live
+// link per session. `expiresAt` is the SESSION's expiry: the link lives
+// exactly as long as the session and answers 410 with it.
+export const zSharedSetupLinkResponse = z.object({
+  setupUrl: z.string().min(1),
+  expiresAt: z.iso.datetime(),
+});
+
+export type SharedSetupLinkResponse = z.infer<typeof zSharedSetupLinkResponse>;
+
 // ── /api/v1/webhook-endpoints ───────────────────────────────────────────────
 // The REST lifecycle for an app's webhook endpoints (2026-08-17): the same set
 // the dashboard's Webhooks card manages, so an integrator can drive it from CI/
@@ -1177,6 +1318,12 @@ export const zWebhookEndpointSummary = z.object({
    * not the raw input string — a trailing-slash variant is stored canonical. */
   url: z.string(),
   createdAt: z.iso.datetime(),
+  /** When the endpoint was AUTO-PAUSED (no successful delivery for 7 days AND
+   * at least 5 dead-lettered deliveries in that span), or null while it is
+   * delivering normally. While paused, new events are recorded as skipped
+   * deliveries and never sent; `POST /api/v1/webhook-endpoints/{id}/resume`
+   * (or a PATCH that changes the url) resumes it. */
+  pausedAt: z.iso.datetime().nullable(),
 });
 
 export type WebhookEndpointSummary = z.infer<typeof zWebhookEndpointSummary>;

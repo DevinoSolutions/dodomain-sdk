@@ -37,6 +37,7 @@ const ENDPOINT: WebhookEndpoint = {
   appId: "app_1",
   url: "https://hooks.acme.com/dodomain",
   createdAt: "2026-08-19T08:00:00.000Z",
+  pausedAt: null,
 };
 
 interface SeenRequest {
@@ -191,6 +192,12 @@ test("apps.list sends GET /api/v1/apps and returns the apps the credential can s
     logoUrl: null,
     brandColor: null,
     tlsIssuerCa: null,
+    connectHeadline: null,
+    connectSubheadline: null,
+    connectSuccessCtaLabel: null,
+    connectSuccessRedirectUrl: null,
+    connectFontPreset: null,
+    hideConnectFooterHelp: false,
     createdAt: "2026-08-19T08:00:00.000Z",
   };
   const { fetchImpl } = recordingFetch(seen, { apps: [app] });
@@ -475,6 +482,42 @@ test("webhookEndpoints.rotateSecret rejects a blank endpoint id before any netwo
 
   await assert.rejects(
     () => client(fetchImpl).webhookEndpoints.rotateSecret("   "),
+    (err: unknown) => {
+      assert.ok(err instanceof DoDomainError);
+      assert.equal(err.status, 0);
+      return true;
+    },
+  );
+  assert.equal(wasCalled(), false);
+});
+
+test("webhookEndpoints.resume POSTs the verb sub-path with no body and returns the resumed endpoint", async () => {
+  const seen: SeenRequest[] = [];
+  const { fetchImpl } = recordingFetch(seen, ENDPOINT);
+
+  const resumed = await client(fetchImpl).webhookEndpoints.resume("whe_1");
+
+  assert.equal(seen[0]?.url, "https://app.dodomain.io/api/v1/webhook-endpoints/whe_1/resume");
+  assert.equal(seen[0]?.method, "POST");
+  assert.equal(seen[0]?.body, null, "resume is an action, not a property to send");
+  assert.deepEqual(resumed, ENDPOINT);
+  assert.equal(resumed.pausedAt, null);
+});
+
+test("a paused endpoint's pausedAt survives the SDK's response parse", async () => {
+  const paused: WebhookEndpoint = { ...ENDPOINT, pausedAt: "2026-10-08T09:00:00.000Z" };
+  const { fetchImpl } = recordingFetch([], { endpoints: [paused] });
+
+  const page = await client(fetchImpl).webhookEndpoints.list();
+
+  assert.equal(page.endpoints[0]?.pausedAt, "2026-10-08T09:00:00.000Z");
+});
+
+test("webhookEndpoints.resume rejects a blank endpoint id before any network call", async () => {
+  const { fetchImpl, wasCalled } = unreachableFetch();
+
+  await assert.rejects(
+    () => client(fetchImpl).webhookEndpoints.resume(""),
     (err: unknown) => {
       assert.ok(err instanceof DoDomainError);
       assert.equal(err.status, 0);

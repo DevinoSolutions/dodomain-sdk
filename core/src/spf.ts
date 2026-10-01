@@ -24,7 +24,7 @@
 // node:dns/promises Resolver verify.ts uses.
 
 import { NODATA, NOTFOUND } from "node:dns";
-import { Resolver } from "node:dns/promises";
+import { boundedResolver } from "./dns-defaults.ts";
 import {
   SPF_DNS_LOOKUP_LIMIT,
   SPF_MECHANISMS,
@@ -37,9 +37,6 @@ import {
 
 /** How deep include:/redirect= chains are followed. The lookup limit bounds breadth; this bounds a pathological loop. */
 const MAX_INCLUDE_DEPTH = 10;
-
-const DEFAULT_DNS_TIMEOUT_MS = 5000;
-const DEFAULT_DNS_TRIES = 2;
 
 export interface SpfDeps {
   /** TXT lookup; default: a bounded node:dns/promises Resolver on the system's nameservers. */
@@ -135,11 +132,7 @@ async function readSpfRecords(
 export async function analyzeSpf(domain: string, deps: SpfDeps = {}): Promise<SpfAnalysis> {
   const resolveTxt =
     deps.resolveTxt ??
-    ((host: string) =>
-      new Resolver({
-        timeout: deps.dnsTimeoutMs ?? DEFAULT_DNS_TIMEOUT_MS,
-        tries: deps.dnsTries ?? DEFAULT_DNS_TRIES,
-      }).resolveTxt(host));
+    ((host: string) => boundedResolver(deps.dnsTimeoutMs, deps.dnsTries).resolveTxt(host));
 
   const name = domain.trim().replace(/\.$/, "").toLowerCase();
   const issues: SpfIssue[] = [];
@@ -396,7 +389,7 @@ export async function analyzeSpf(domain: string, deps: SpfDeps = {}): Promise<Sp
       severity: "error",
       domain: name,
       term: null,
-      note: `The record needs ${dnsLookups} DNS lookups; RFC 7208 allows ${SPF_DNS_LOOKUP_LIMIT}. Receivers return permerror and ignore the whole policy — flatten includes or replace them with ip4:/ip6:.`,
+      note: `The record needs ${dnsLookups} DNS lookups; RFC 7208 allows ${SPF_DNS_LOOKUP_LIMIT}. Receivers return permerror for any sender whose check runs past the ${SPF_DNS_LOOKUP_LIMIT}th lookup; which senders that hits depends on their order in the record. Remove includes you no longer use, or replace one with the ip4:/ip6: ranges it resolves to.`,
     });
   }
 

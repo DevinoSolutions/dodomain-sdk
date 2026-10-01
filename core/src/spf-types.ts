@@ -38,7 +38,7 @@ export const SPF_ISSUE_CODES = [
   "no_all",
   /** `ptr` is deprecated (RFC 7208 §5.5) and slow; receivers may ignore it. */
   "ptr_mechanism",
-  /** The recursive DNS-lookup count exceeds 10 — receivers permerror the WHOLE record. */
+  /** The recursive DNS-lookup count exceeds 10 — receivers permerror any sender whose check runs past the 10th lookup. */
   "lookup_limit_exceeded",
   /** `redirect=` alongside an `all` mechanism is ignored by receivers (RFC 7208 §6.1). */
   "redirect_ignored",

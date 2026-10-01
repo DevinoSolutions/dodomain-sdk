@@ -147,6 +147,9 @@ const NS_MAP: Array<{
   { re: /\bbluehost\.com$/i, provider: "bluehost", label: "Bluehost", method: "guided" },
   { re: /\bhostgator\.com$/i, provider: "hostgator", label: "HostGator", method: "guided" },
   { re: /\bdreamhost\.com$/i, provider: "dreamhost", label: "DreamHost", method: "guided" },
+  // Stage 9 WS-G (2026-09-05): Hover's customer NS are ns1/ns2.hover.com;
+  // guided, with its own guides.ts entry. No API, no Domain Connect.
+  { re: /\bhover\.com$/i, provider: "hover", label: "Hover", method: "guided" },
 ];
 
 // `"domain-connect": 2` routes the NS_MAP rows above with

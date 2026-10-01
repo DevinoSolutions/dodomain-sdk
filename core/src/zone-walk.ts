@@ -33,9 +33,8 @@
 // appropriate data. How this is implemented is up to the DNS Provider"), so a
 // TXT answer alone can never establish that a name is a zone.
 
-import { resolveNs } from "node:dns/promises";
-
 import { apexOf } from "./apex.ts";
+import { sharedBoundedResolver } from "./dns-defaults.ts";
 
 /** Hard bound on one walk: a hostname may carry up to 127 labels and every
  * candidate costs a DNS round trip. The registrable apex is ALWAYS the last
@@ -68,9 +67,13 @@ function zoneCandidates(host: string): string[] {
 }
 
 export interface ZoneWalkDeps {
-  /** Authoritative NS lookup; defaults to node:dns. Injected in tests so the
-   * walk runs offline. A DNS query opens no socket to a stranger-chosen host,
-   * so this needs no SSRF guard (unlike the discovery fetch). */
+  /** Authoritative NS lookup; defaults to the BOUNDED node:dns resolver
+   * (dns-defaults.ts). Injected in tests so the walk runs offline. A DNS query
+   * opens no socket to a stranger-chosen host, so this needs no SSRF guard
+   * (unlike the discovery fetch) — but it does need a deadline: this walk asks
+   * one candidate at a time, so on node's unbounded default a single
+   * black-holed delegation cost ~30 s per candidate and the whole walk far more
+   * than any caller was prepared to wait (dns-defaults.ts's header). */
   resolveNs?: (host: string) => Promise<string[]>;
 }
 
@@ -105,7 +108,7 @@ async function nsOf(
  * used, nameservers included (`[]` when DNS fails, as before).
  */
 export async function nearestZoneCut(fqdn: string, deps: ZoneWalkDeps = {}): Promise<ZoneCut> {
-  const resolve = deps.resolveNs ?? resolveNs;
+  const resolve = deps.resolveNs ?? ((host: string) => sharedBoundedResolver().resolveNs(host));
   const candidates = zoneCandidates(normalizeFqdn(fqdn));
   const floor = candidates[candidates.length - 1]!;
 

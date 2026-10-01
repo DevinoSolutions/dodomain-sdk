@@ -444,6 +444,15 @@ test("HostGator NS (per-server nsNNNN) → tier 3 guided", async () => {
   assert.equal(m.tier, 3);
 });
 
+test("Hover NS → tier 3 guided", async () => {
+  const m = await detectProvider("x.example.com", {
+    resolveNs: nsReturning(["ns1.hover.com", "ns2.hover.com"]),
+    discover: discoverThrows,
+  });
+  assert.equal(m.provider, "hover");
+  assert.equal(m.tier, 3);
+});
+
 test("DreamHost NS → tier 3 guided", async () => {
   const m = await detectProvider("x.example.com", {
     resolveNs: nsReturning(["ns1.dreamhost.com", "ns2.dreamhost.com"]),

@@ -296,7 +296,9 @@ export class DoDomain {
      * endpoint at a new url. The signing secret is deliberately UNTOUCHED, so
      * moving hosts never forces a receiver to re-key; `rotateSecret` is the
      * explicit sibling for that. Same url policy and duplicate rule as
-     * `create`. An unknown id and another app's id both throw `status: 404`.
+     * `create`. A url that actually changes also resumes an auto-paused
+     * endpoint (see `resume`). An unknown id and another app's id both throw
+     * `status: 404`.
      */
     update: async (endpointId: string, input: WebhookEndpointInput): Promise<WebhookEndpoint> => {
       const path = webhookEndpointPath(endpointId);
@@ -335,6 +337,23 @@ export class DoDomain {
         webhookEndpointPath(endpointId, "/rotate-secret"),
         undefined,
         zWebhookEndpointSecretResponse,
+      ),
+
+    /**
+     * `POST /api/v1/webhook-endpoints/:endpointId/resume` — resume an endpoint
+     * DoDomain auto-paused (no successful delivery for 7 days and at least 5
+     * dead-lettered deliveries in that span; `pausedAt` is set while it is).
+     * Clears `pausedAt` and restarts the 7-day clock. Idempotent: an endpoint
+     * that is not paused comes back unchanged. Deliveries recorded as skipped
+     * while it was paused are NOT resent by this call — redrive them from the
+     * dashboard. An `update` that changes the url resumes the endpoint too.
+     */
+    resume: async (endpointId: string): Promise<WebhookEndpoint> =>
+      this.request(
+        "POST",
+        webhookEndpointPath(endpointId, "/resume"),
+        undefined,
+        zWebhookEndpointSummary,
       ),
   };
 

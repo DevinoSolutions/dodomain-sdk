@@ -228,7 +228,16 @@ same code path.
 ### `dodomain.webhookEndpoints.update(endpointId, input) → Promise<WebhookEndpoint>`
 
 Repoints an endpoint at a new `url`. The signing secret is deliberately untouched, so moving
-hosts never forces your receiver to re-key.
+hosts never forces your receiver to re-key. A `url` that actually changes also resumes an
+auto-paused endpoint.
+
+### `dodomain.webhookEndpoints.resume(endpointId) → Promise<WebhookEndpoint>`
+
+Resumes an endpoint DoDomain paused automatically — one that had no successful delivery for 7 days
+and at least 5 dead-lettered deliveries in that span (`pausedAt` is set while it is paused). Clears
+`pausedAt` and restarts the 7-day clock; idempotent on an endpoint that is not paused. Events that
+happened while it was paused were recorded as skipped deliveries and are not resent by this call —
+redrive them from the dashboard.
 
 ### `dodomain.webhookEndpoints.delete(endpointId) → Promise<DeleteWebhookEndpointResult>`
 
@@ -259,7 +268,7 @@ Verifies the `t=<unixMs>,v1=<hex hmac>` signature DoDomain sends with every webh
 `DnsRecord` = `{ type, host, value, priority?, ttl? }`.
 `Connection` = `{ id, appId, sessionId, domain, fqdn, recordFqdns, status, verifiedAt, lastCheckedAt, brokenAt, disconnectedAt, createdAt }`.
 `IntegratorSession` = `{ id, appId, domain, records, recipe, status, tier, detectedProvider, connectionId, createdAt, expiresAt, expired }`.
-`WebhookEndpoint` = `{ id, appId, url, createdAt }`; `WebhookEndpointWithSecret` adds the
+`WebhookEndpoint` = `{ id, appId, url, createdAt, pausedAt }`; `WebhookEndpointWithSecret` adds the
 show-once `secret`.
 `RotateSecretKeyResult` = `{ appId, publicKey, secretKey, rotatedAt }`.
 `WebhookEvent` = `{ id, type, occurredAt, data }` — the envelope DoDomain delivers.

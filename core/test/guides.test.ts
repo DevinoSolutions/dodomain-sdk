@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { guideFor } from "../src/guides.ts";
+import { guideFor, listProviderGuides } from "../src/guides.ts";
 
 test("guideFor returns the matching provider guide", () => {
   const g = guideFor("cloudflare", "acme.com");
@@ -87,4 +87,45 @@ test("generic fallback still works for providers without a dedicated guide", () 
   const g = guideFor("some-brand-new-registrar", "acme.com");
   assert.equal(g.provider, "unknown");
   assert.ok(g.steps.length > 0);
+});
+
+// —— Stage 9 WS-G batch (2026-09-05): providers whose vocabulary was re-read
+// from the provider's own help page carry a dated citation; Hover is new.
+
+test("Hover resolves to a dedicated guide with the @-for-root rule and a help citation", () => {
+  const g = guideFor("hover", "acme.com");
+  assert.equal(g.provider, "hover");
+  assert.equal(g.apexToken, "@");
+  assert.ok(g.steps.some((s) => s.includes("acme.com")));
+  assert.ok(g.helpArticle?.url.startsWith("https://support.hover.com/"));
+  assert.match(g.helpArticle?.checkedOn ?? "", /^\d{4}-\d{2}-\d{2}$/);
+});
+
+test("every help-article citation carries a full ISO date and an https URL", () => {
+  for (const g of listProviderGuides()) {
+    if (!g.helpArticle) continue;
+    assert.match(g.helpArticle.checkedOn, /^\d{4}-\d{2}-\d{2}$/, `${g.provider} checkedOn`);
+    assert.ok(g.helpArticle.url.startsWith("https://"), `${g.provider} helpArticle url`);
+  }
+});
+
+test("listProviderGuides returns every dedicated guide, label-sorted, without the generic fallback", () => {
+  const all = listProviderGuides();
+  assert.ok(all.length >= 23, `expected the full provider set, got ${all.length}`);
+  assert.ok(
+    !all.some((g) => g.provider === "unknown"),
+    "generic fallback is not a listed provider",
+  );
+  const labels = all.map((g) => g.label);
+  assert.deepEqual(
+    labels,
+    [...labels].sort((a, b) => a.localeCompare(b, "en")),
+  );
+  for (const g of all) {
+    assert.equal(guideFor(g.provider).provider, g.provider, `${g.provider} resolves to itself`);
+    assert.ok(
+      g.steps.length > 0 && g.hostFormat.length > 0,
+      `${g.provider} has steps + host format`,
+    );
+  }
 });

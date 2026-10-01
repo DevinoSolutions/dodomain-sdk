@@ -30,8 +30,34 @@
 // is no CSP: apps/web's server tree, the worker, and packages/node inside an
 // INTEGRATOR's Node process (this module ships to them; it must not change
 // their validation performance). Set at module scope, which is ordered
-// correctly by construction — `allowsEval` is lazy, so any schema that could
-// consult it can only be built after this module has evaluated.
+// correctly by ESM construction — `allowsEval` is lazy, so any schema that
+// could consult it can only be built after this module has evaluated.
+//
+// That ordering only holds if the bundler RUNS this module, and ESM semantics
+// do not guarantee that on their own. Its one consumed export is a pure
+// re-export of zod's `z`, and the `config()` call is a side effect, so a
+// `"sideEffects": false` package lets the bundler drop the body and wire every
+// import straight to "zod". packages/core declared exactly that, and it
+// happened: measured 2026-09-22, the config call was in none of the chunks
+// prod's connect page loads while zod's probe sat in one, so the #210 "fix"
+// never reached a browser — 11 reports / 5 users by then (DODOMAIN-WEB-K), from
+// real integrator embeds. packages/core/package.json therefore lists this file
+// in `sideEffects`, and zod-runtime.test.ts fails the build if it stops.
+//
+// Reaching the browser through core's own schemas was still not enough, because
+// core is not the only thing that builds zod schemas there. zod decides
+// `allowsEval` ONCE, the first time ANY `z.object()` is constructed by ANY copy
+// of zod on the page (its config lives on `globalThis.__zod_globalConfig`, shared
+// across copies), and the dashboard, /signin and the docs ship zod in a shared
+// chunk that other modules reach before core's schemas ever load. Measured
+// 2026-10-01: `__zod_globalConfig` read `{}` after load on /signin, /docs, the
+// landing and even /connect, and DODOMAIN-WEB-K kept firing from real browsers
+// on /dashboard, /dashboard/billing, /settings and /support (32 events from
+// Chrome 150-154, Edge and Android WebView since 2026-09-22), source file the
+// zod chunk. So every Next app now imports THIS module first thing in its
+// `instrumentation-client.ts` — `import "@dodomain/core/zod-runtime"` — which
+// Next requires before hydration, i.e. before any page or layout module can
+// build a schema. zod-runtime.test.ts pins that import in all three apps.
 import { config, z } from "zod";
 
 if (typeof window !== "undefined") {
