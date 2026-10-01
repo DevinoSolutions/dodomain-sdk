@@ -254,19 +254,24 @@ jobs:
         if: inputs.mode == 'publish'
         # A publish that "succeeded" without landing, or that landed without
         # provenance, are both failures worth catching here rather than
-        # discovering later. npm's read path is CDN-cached, so allow a little
-        # time for the new version to appear.
+        # discovering later. npm now PROCESSES a publish asynchronously ("Your
+        # package is being processed and may take a few minutes to become
+        # available") and `npm view` answers with the old version until it is
+        # done: @dodomain/node 0.7.0 (2026-10-01) took ~16 min to be served and
+        # ~21 min to be installable, so the old 1-minute window turned a good
+        # release red. Wait up to 40 min, polling every 30 s.
+        timeout-minutes: 45
         run: |
           version="${{ steps.version.outputs.version }}"
-          for attempt in 1 2 3 4 5 6; do
-            published="$(npm view "$PKG_NAME" version 2>/dev/null || true)"
+          for attempt in $(seq 1 80); do
+            published="$(npm view "$PKG_NAME@$version" version --prefer-online 2>/dev/null || true)"
             [ "$published" = "$version" ] && break
-            echo "attempt $attempt: registry still on '${published:-none}', waiting"
-            sleep 10
+            echo "attempt $attempt: registry does not serve $version yet ('${published:-none}'), waiting"
+            sleep 30
           done
-          published="$(npm view "$PKG_NAME" version 2>/dev/null || true)"
+          published="$(npm view "$PKG_NAME@$version" version --prefer-online 2>/dev/null || true)"
           if [ "$published" != "$version" ]; then
-            echo "::error::$PKG_NAME@$version did not appear on the registry after publish."
+            echo "::error::$PKG_NAME@$version did not appear on the registry within 40 min of publish."
             exit 1
           fi
           echo "registry serves $PKG_NAME@$version"
