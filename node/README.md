@@ -31,7 +31,7 @@ import { DoDomain } from "@dodomain/node";
 const dodomain = new DoDomain({ secretKey: process.env.DODOMAIN_SECRET_KEY! });
 
 const session = await dodomain.sessions.create({
-  domain: "app.customer.com",
+  domain: "customer.com",
   records: [
     { type: "CNAME", host: "app", value: "cname.sendly.io" },
     { type: "TXT", host: "_verify", value: "sendly-domain-abc123" },
@@ -87,6 +87,7 @@ session.records; // the composed fqdns DoDomain verifies, not the raw echo
 // Which provider, which zone, which connect flow — without creating a session.
 const check = await dodomain.domains.check({ domain: "app.customer.com" });
 check.tier; // 1 = Cloudflare one-click · 2 = Domain Connect · 3 = manual
+check.oneClickAvailable; // false on tier 2 when the provider serves none of our templates (e.g. GoDaddy)
 check.guide.steps; // what to tell the user if it comes to manual records
 ```
 
@@ -211,8 +212,9 @@ The apps this credential can see. A secret key sees exactly its own app; an OAut
 
 ### `dodomain.domains.check(input) → Promise<CheckDomainResult>`
 
-`input`: `{ domain }`. Stateless pre-flight — provider, owning zone, connect tier and flow, and
-the manual guide — without creating a session. Nothing is persisted; available on every plan.
+`input`: `{ domain }`. Stateless pre-flight — provider, owning zone, connect tier and flow, whether one-click is
+actually available there (`oneClickAvailable`: `tier: 2` alone only means the provider speaks
+Domain Connect), and the manual guide — without creating a session. Nothing is persisted; available on every plan.
 
 ### `dodomain.webhookEndpoints.list() → Promise<ListWebhookEndpointsResult>`
 

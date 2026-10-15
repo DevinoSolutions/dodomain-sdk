@@ -326,6 +326,12 @@ export interface CheckDomainResult {
     providerName?: string;
   };
   guide: ProviderGuide;
+  /** true ⇒ the domain's DNS provider offers one-click for at least one typical
+   * setup: tier 1 (Cloudflare OAuth), or tier 2 where the provider serves at
+   * least one of DoDomain's Domain Connect templates. `tier: 2` alone only means
+   * the provider speaks Domain Connect (GoDaddy does, and serves none, so
+   * `false`). Fails closed. A session still needs a Pro or Scale plan for it. */
+  oneClickAvailable: boolean;
 }
 
 // ── Webhook endpoints ───────────────────────────────────────────────────────

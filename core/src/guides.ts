@@ -25,6 +25,20 @@ export interface ProviderGuide {
   steps: string[];
   notes?: string[];
   /**
+   * True when this guide's own copy (hostFormat / notes) says a CNAME does not
+   * belong on the bare domain (GoDaddy refuses it, Namecheap and Hover advise
+   * against it). The docs page then also links the ALIAS / CNAME-flattening
+   * definition, the workaround a customer in that spot needs. Drives docs copy
+   * only, never the connect flow.
+   */
+  discouragesApexCname?: true;
+  /**
+   * True when the provider's panel has no host field at all (records apply to
+   * the (sub)domain you select). The docs page then does not headline a
+   * "host field" the panel does not have.
+   */
+  hasNoHostField?: true;
+  /**
    * The provider's OWN help article the steps and vocabulary were checked
    * against, and when — rendered as a dated citation on the docs page. Absent
    * on the entries whose wording was verified at authoring time (2026-07)
@@ -59,6 +73,7 @@ const GUIDES: Record<string, ProviderGuide> = {
     hostFormat:
       "Enter the subdomain only in Name (e.g. `www`), never the full domain; use `@` for the apex on A/TXT records — GoDaddy refuses `@` as a CNAME Name, so a CNAME always needs a subdomain.",
     apexToken: "@",
+    discouragesApexCname: true,
     steps: [
       "Sign in to GoDaddy → Domain Portfolio → select %domain% → DNS.",
       "Select Add New Record and pick the record type from the Type menu.",
@@ -80,6 +95,7 @@ const GUIDES: Record<string, ProviderGuide> = {
     dashboardUrl: "https://ap.www.namecheap.com/domains/domaincontrolpanel/%domain%/advancedns",
     hostFormat: "Enter the subdomain only in Host; use `@` for the apex.",
     apexToken: "@",
+    discouragesApexCname: true,
     steps: [
       "Namecheap → Domain List → Manage %domain% → Advanced DNS.",
       "Under Host Records, click Add New Record.",
@@ -321,6 +337,7 @@ const GUIDES: Record<string, ProviderGuide> = {
     hostFormat:
       "Enter the subdomain only in Hostname; use `@` for the root domain (if a form asks for your full domain as the hostname, type `@` instead).",
     apexToken: "@",
+    discouragesApexCname: true,
     steps: [
       "Sign in to Hover → Domains → %domain% → the DNS tab.",
       "Click Add a record and pick the record type.",
@@ -342,6 +359,7 @@ const GUIDES: Record<string, ProviderGuide> = {
     hostFormat:
       "No host field: records apply to the (sub)domain you select — create the subdomain under Domains first if it doesn't exist yet.",
     apexToken: "%domain%",
+    hasNoHostField: true,
     steps: [
       "STRATO customer login → Domains → Domain management.",
       "Open the settings (gear) next to %domain% — or the subdomain — and go to DNS.",

@@ -640,6 +640,18 @@ export const zCheckDomainResponse = z.object({
     providerName: z.string().optional(),
   }),
   guide: zProviderGuide,
+  /**
+   * true ⇒ this domain's DNS provider offers DoDomain's one-click for at least
+   * one typical setup: tier 1 (Cloudflare OAuth), or tier 2 where the provider
+   * serves at least one of DoDomain's Domain Connect templates (probed live,
+   * the same probe the public provider detector runs). `tier: 2` alone only
+   * means the provider SPEAKS Domain Connect — GoDaddy does, and serves none of
+   * the templates, so it answers `false`. Fails closed: a probe that could not
+   * finish is `false`. Provider-level only: a session also needs a plan with
+   * one-click (Pro/Scale). Verdict: core one-click.ts `oneClickAvailableFor`.
+   * Added 2026-10-14, additive — every published SDK ignores unknown fields.
+   */
+  oneClickAvailable: z.boolean(),
 });
 
 export type CheckDomainResponse = z.infer<typeof zCheckDomainResponse>;
@@ -680,11 +692,17 @@ export const zTemplateProbeOutcome = z.discriminatedUnion("probed", [
 
 export type TemplateProbeOutcome = z.infer<typeof zTemplateProbeOutcome>;
 
-export const zDomainPreflightResponse = zCheckDomainResponse.extend({
-  // One outcome per registry template — zod 4's enum-keyed record is
-  // exhaustive, so a template missing from a response fails validation.
-  templates: z.record(zDomainConnectServiceId, zTemplateProbeOutcome),
-});
+// The raw template outcomes REPLACE the REST route's derived `oneClickAvailable`
+// here: both preflight surfaces render a finer verdict from the probes
+// themselves (@dodomain/ui/preflight, through the same core one-click.ts), and
+// carrying both would let the two disagree on the wire.
+export const zDomainPreflightResponse = zCheckDomainResponse
+  .omit({ oneClickAvailable: true })
+  .extend({
+    // One outcome per registry template — zod 4's enum-keyed record is
+    // exhaustive, so a template missing from a response fails validation.
+    templates: z.record(zDomainConnectServiceId, zTemplateProbeOutcome),
+  });
 
 export type DomainPreflightResponse = z.infer<typeof zDomainPreflightResponse>;
 

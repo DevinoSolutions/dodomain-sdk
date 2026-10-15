@@ -724,6 +724,8 @@ test("zCheckDomainResponse accepts the route payload for both discovery outcomes
     confidence: "high",
     nameServers: ["ns1.domaincontrol.com", "ns2.domaincontrol.com"],
     guide: guideFor("godaddy", "feastables.com"),
+    // GoDaddy speaks Domain Connect and serves none of our templates.
+    oneClickAvailable: false,
   };
   assert.equal(
     zCheckDomainResponse.safeParse({
@@ -735,6 +737,15 @@ test("zCheckDomainResponse accepts the route payload for both discovery outcomes
   assert.equal(
     zCheckDomainResponse.safeParse({ ...base, domainConnect: { discovered: false } }).success,
     true,
+  );
+  // oneClickAvailable is part of the contract: a producer that omits it has
+  // dropped the one field that says whether tier 2 is really one-click.
+  const withoutVerdict: Record<string, unknown> = { ...base };
+  delete withoutVerdict.oneClickAvailable;
+  assert.equal(
+    zCheckDomainResponse.safeParse({ ...withoutVerdict, domainConnect: { discovered: false } })
+      .success,
+    false,
   );
   // tier outside 1|2|3 is a producer bug, not a passthrough.
   assert.equal(

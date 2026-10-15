@@ -129,3 +129,27 @@ test("listProviderGuides returns every dedicated guide, label-sorted, without th
     );
   }
 });
+
+// The docs generator headlines these two flags (apps/docs/scripts/generate-dns-provider-guides.mts):
+// a flag may only sit on a guide whose own copy says what the flag claims, so the page
+// never asserts something the provider entry does not.
+test("discouragesApexCname is set exactly where the guide copy warns about a CNAME on the bare domain", () => {
+  const flagged = listProviderGuides()
+    .filter((g) => g.discouragesApexCname)
+    .map((g) => g.provider);
+  assert.deepEqual(flagged, ["godaddy", "hover", "namecheap"]);
+  for (const g of listProviderGuides().filter((x) => x.discouragesApexCname)) {
+    const copy = [g.hostFormat, ...(g.notes ?? [])].join(" ");
+    assert.match(copy, /CNAME/, `${g.provider} copy names CNAME`);
+    assert.match(copy, /`@`|bare domain|root domain/, `${g.provider} copy names the bare domain`);
+  }
+});
+
+test("hasNoHostField is set only on a guide whose host copy says there is no host field", () => {
+  const flagged = listProviderGuides().filter((g) => g.hasNoHostField);
+  assert.deepEqual(
+    flagged.map((g) => g.provider),
+    ["strato"],
+  );
+  for (const g of flagged) assert.match(g.hostFormat, /^No host field/);
+});

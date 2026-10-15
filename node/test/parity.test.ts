@@ -242,6 +242,7 @@ const CHECK_RESULT = {
     apexToken: "@" as const,
     steps: ["Open the DNS tab", "Add the record"],
   },
+  oneClickAvailable: true,
 };
 
 test("domains.check POSTs the domain to /api/v1/domains/check and returns the pre-flight verdict", async () => {
