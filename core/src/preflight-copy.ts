@@ -25,5 +25,5 @@ export const TEMPLATE_NOT_PROBED_COPY: Record<TemplateNotProbedReason, string> =
   flag_off:
     "The Domain Connect apply path is switched off in this deployment, so no provider was contacted.",
   probe_failed:
-    "The provider did not answer inside the probe's budget. That is a fact about the request, not about the provider — re-run the check.",
+    "The provider did not answer inside the probe's budget. That is a fact about the request, not about the provider. Re-run the check.",
 };

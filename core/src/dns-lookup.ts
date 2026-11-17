@@ -19,7 +19,7 @@
 // unit test never opens a socket.
 
 import { boundedResolver, DEFAULT_DNS_TIMEOUT_MS, DEFAULT_DNS_TRIES } from "./dns-defaults.ts";
-import type { RecordType } from "./record-capabilities.ts";
+import { canonicalDnsAnswer, type LookupRecordType } from "./record-capabilities.ts";
 import {
   lookupRecordAnswers,
   resolveZoneAuthority,
@@ -35,6 +35,9 @@ export const PUBLIC_RESOLVERS = [
 ] as const;
 
 export interface DnsLookupDeps extends VerifyDeps {
+  /** Total request deadline is owned by the caller. In-flight DNS remains
+   * bounded by dns-defaults; an aborted composition schedules no next lookup. */
+  signal?: AbortSignal;
   /** Builds the resolver for one public address (default: a bounded Resolver pinned to it). */
   publicResolverFor?: (address: string) => DnsResolver;
 }
@@ -48,13 +51,15 @@ export interface ResolverView {
   outcome: "answers" | "absent" | "error";
   /** Verbatim answers (MX as `"priority exchange"`), empty unless `answers`. */
   answers: string[];
+  /** Per-answer metadata. TTL is available only for A/AAAA with a capable resolver. */
+  records?: Array<{ value: string; ttl: number | null }>;
   /** The `node:dns` error code behind `error`. */
   error?: string;
 }
 
 export interface DnsLookupResult {
   fqdn: string;
-  type: RecordType;
+  type: LookupRecordType;
   /** The zone that owns the name — the nearest delegation cut, floored at the registrable apex. */
   zone: string;
   authoritative: ResolverView;
@@ -67,10 +72,8 @@ export interface DnsLookupResult {
   consistent: boolean | null;
 }
 
-function canonicalAnswerSet(answers: string[]): string {
-  return [...new Set(answers.map((a) => a.trim().replace(/\.$/, "").toLowerCase()))]
-    .sort()
-    .join("\n");
+function canonicalAnswerSet(type: LookupRecordType, answers: string[]): string {
+  return [...new Set(answers.map((a) => canonicalDnsAnswer(type, a)))].sort().join("\n");
 }
 
 async function view(
@@ -78,15 +81,19 @@ async function view(
   address: string | null,
   resolver: DnsResolver,
   fqdn: string,
-  type: RecordType,
+  type: LookupRecordType,
 ): Promise<ResolverView> {
-  const outcome = await lookupRecordAnswers(resolver, fqdn, type);
+  const outcome = await lookupRecordAnswers(resolver, fqdn, type, true);
   if (outcome.kind === "records") {
     return {
       resolver: resolverName,
       address,
       outcome: outcome.records.length === 0 ? "absent" : "answers",
       answers: outcome.records,
+      records: outcome.records.map((value, index) => ({
+        value,
+        ttl: outcome.ttls?.[index] ?? null,
+      })),
     };
   }
   if (outcome.kind === "absent")
@@ -100,9 +107,10 @@ async function view(
  */
 export async function lookupRecordAcrossResolvers(
   fqdn: string,
-  type: RecordType,
+  type: LookupRecordType,
   deps: DnsLookupDeps = {},
 ): Promise<DnsLookupResult> {
+  deps.signal?.throwIfAborted();
   const name = fqdn.trim().replace(/\.$/, "").toLowerCase();
   const timeoutMs = deps.dnsTimeoutMs ?? DEFAULT_DNS_TIMEOUT_MS;
   const tries = deps.dnsTries ?? DEFAULT_DNS_TRIES;
@@ -116,6 +124,7 @@ export async function lookupRecordAcrossResolvers(
 
   const authorityPromise = resolveZoneAuthority(name, deps).then(
     async ({ zone, authoritative }): Promise<{ zone: string; view: ResolverView }> => {
+      deps.signal?.throwIfAborted();
       if (authoritative.kind !== "resolver") {
         return {
           zone,
@@ -137,13 +146,14 @@ export async function lookupRecordAcrossResolvers(
   );
 
   const [authority, ...publicViews] = await Promise.all([authorityPromise, ...publicPromises]);
+  deps.signal?.throwIfAborted();
 
   let consistent: boolean | null = null;
   if (authority.view.outcome !== "error") {
-    const reference = canonicalAnswerSet(authority.view.answers);
+    const reference = canonicalAnswerSet(type, authority.view.answers);
     consistent = publicViews
       .filter((v) => v.outcome !== "error")
-      .every((v) => canonicalAnswerSet(v.answers) === reference);
+      .every((v) => canonicalAnswerSet(type, v.answers) === reference);
   }
 
   return {

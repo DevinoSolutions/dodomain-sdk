@@ -112,6 +112,56 @@ export function spfRecordSatisfies(expected: string, actual: string): boolean {
 }
 
 /**
+ * The one `include:` host of a PUBLISHED SPF record that is a provider's SPFM
+ * indirection inside `zone`, or null.
+ *
+ * GoDaddy does not merge an SPFM record into the apex SPF record: it publishes
+ * the merged terms at a generated `<id>._spfm.<zone>` name and points the apex
+ * record at it. Live on 2026-11-04 (dodomain.site, `email-authentication`,
+ * spfInclude=amazonses.com) the apex read
+ * `v=spf1 include:dc-771c848bd5._spfm.dodomain.site ~all` and that name read
+ * `v=spf1 include:amazonses.com ~all`, so a term-aware compare of the apex
+ * record alone never saw the include it asked for.
+ *
+ * The rule is deliberately narrow: the host must be a STRICT subdomain of
+ * `zone` (never another zone's record) and carry a `_spfm` label, and a record
+ * with two such includes yields null. Anything else is an ordinary include,
+ * which verification never follows.
+ */
+export function spfmIndirectionHost(actual: string, zone: string): string | null {
+  const record = parseSpfRecord(actual);
+  if (record === null) return null;
+  const apex = zone.replace(/\.$/, "").toLowerCase();
+  const hosts = record.terms.flatMap((term) => {
+    const match = /^\+?include:([^\s/]+)$/i.exec(term);
+    const host = match?.[1]?.replace(/\.$/, "").toLowerCase();
+    if (host === undefined || !host.endsWith(`.${apex}`)) return [];
+    return host.split(".").includes("_spfm") ? [host] : [];
+  });
+  return hosts.length === 1 ? hosts[0]! : null;
+}
+
+/**
+ * `spfRecordSatisfies` across ONE SPFM indirection: true when the published
+ * record's own terms plus the terms of the record its `_spfm` include points at
+ * (`spfmIndirectionHost`) carry every term the expected record asks for. The
+ * caller resolves the included record; this stays pure. The included record's
+ * `all` is ignored like the published one's.
+ */
+export function spfRecordSatisfiesThrough(
+  expected: string,
+  actual: string,
+  included: string,
+): boolean {
+  const want = parseSpfRecord(expected);
+  const have = parseSpfRecord(actual);
+  const via = parseSpfRecord(included);
+  if (want === null || have === null || via === null) return false;
+  const published = new Set([...have.terms, ...via.terms].map(normalizeSpfTerm));
+  return want.terms.every((term) => published.has(normalizeSpfTerm(term)));
+}
+
+/**
  * The PUBLISHED SPF record rewritten so it also carries every term the EXPECTED
  * one asks for — the merge Domain Connect performs for us at tier 2 (the `SPFM`
  * pseudo-type, domain-connect-templates.ts), done by hand on the tier-1

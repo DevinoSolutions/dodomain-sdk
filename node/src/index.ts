@@ -2,17 +2,24 @@
 // Usage:
 //   const dodomain = new DoDomain({ secretKey: process.env.DODOMAIN_SECRET_KEY });
 //   const session = await dodomain.sessions.create({ domain, records, returnUrl });
+// No account yet (keyless start, T-18036):
+//   const dodomain = new DoDomain({ keyless: true });
+//   const session = await dodomain.sessions.create({ domain, records });
+//   session.keyless?.claimUrl, session.keyless?.allowance
 
 import { DODOMAIN_DEFAULT_ORIGIN } from "@dodomain/core/origin";
 import {
   zCheckDomainInput,
   zCheckDomainResponse,
   zConnectionSummary,
+  zCreateKeylessSessionInput,
   zCreateSessionInput,
   zCreateSessionResponse,
   zDeleteWebhookEndpointResponse,
   zDisconnectConnectionResponse,
   zIntegratorSession,
+  zKeylessSessionResponse,
+  zKeylessStatusResponse,
   zListAppsResponse,
   zListConnectionsQuery,
   zListConnectionsResponse,
@@ -27,15 +34,30 @@ import {
 import { verifyWebhook as coreVerifyWebhook } from "@dodomain/core/webhook";
 import type { z } from "zod";
 
+import {
+  DoDomainError,
+  DoDomainKeylessError,
+  errorFromResponse,
+  redactKeylessKeys,
+} from "./errors.ts";
+import {
+  KEYLESS_PROOF_DEFAULT_TIMEOUT_MS,
+  KEYLESS_PROOF_MAX_TIMEOUT_MS,
+  readProofChallenge,
+  solveKeylessProof,
+} from "./keyless.ts";
 import type {
   CheckDomainInput,
   CheckDomainResult,
   ConnectSessionSummary,
   Connection,
+  CreateKeylessSessionInput,
   CreateSessionInput,
   DeleteWebhookEndpointResult,
   DisconnectConnectionResult,
   IntegratorSession,
+  KeylessConnectSessionSummary,
+  KeylessStatus,
   ListAppsResult,
   ListConnectionsInput,
   ListConnectionsResult,
@@ -66,6 +88,7 @@ export type {
   ConnectSessionSummary,
   Connection,
   ConnectionStatus,
+  CreateKeylessSessionInput,
   CreateSessionInput,
   DeleteWebhookEndpointResult,
   DetectionConfidence,
@@ -75,6 +98,10 @@ export type {
   DnsRecord,
   DnsRecordType,
   IntegratorSession,
+  KeylessAllowance,
+  KeylessConnectSessionSummary,
+  KeylessSessionInfo,
+  KeylessStatus,
   ListAppsResult,
   ListConnectionsInput,
   ListConnectionsResult,
@@ -111,23 +138,51 @@ export type {
 // the d.ts stays self-contained (signature pinned in schema-parity.check.ts).
 export const verifyWebhook: VerifyWebhook = coreVerifyWebhook;
 
-export interface DoDomainOptions {
-  secretKey: string;
+export { DoDomainError, DoDomainKeylessError } from "./errors.ts";
+export type { KeylessErrorCode } from "./errors.ts";
+export {
+  KEYLESS_MAX_DIFFICULTY_BITS,
+  solveKeylessProof,
+  type SolveKeylessProofOptions,
+} from "./keyless.ts";
+
+interface DoDomainCommonOptions {
   /** Override the API base (defaults to DODOMAIN_DEFAULT_ORIGIN, https://app.dodomain.io). */
   baseUrl?: string;
   fetchImpl?: typeof fetch;
 }
 
-export class DoDomainError extends Error {
-  readonly status: number;
-  readonly body: unknown;
-  constructor(message: string, status: number, body: unknown) {
-    super(message);
-    this.name = "DoDomainError";
-    this.status = status;
-    this.body = body;
-  }
+/** The usual client: an app's `dd_sk_` secret key, server-side only. */
+export interface DoDomainSecretKeyOptions extends DoDomainCommonOptions {
+  secretKey: string;
+  keyless?: false;
 }
+
+/**
+ * Keyless start (T-18036): no account and no key. `sessions.create` calls
+ * `POST /api/v1/keyless/sessions`, solves the proof of work the first call
+ * asks for, and keeps the returned `dd_ks_` key for later calls. Opt in
+ * explicitly: a missing `secretKey` still throws, so an unset environment
+ * variable can never quietly turn a production client into a test app.
+ */
+export interface DoDomainKeylessOptions extends DoDomainCommonOptions {
+  keyless: true;
+  /** A `dd_ks_` key from an earlier keyless start, to keep using that app. */
+  keylessKey?: string;
+  /** How long one proof-of-work solve may take (default 120 000 ms). */
+  proofTimeoutMs?: number;
+  secretKey?: undefined;
+}
+
+export type DoDomainOptions = DoDomainSecretKeyOptions | DoDomainKeylessOptions;
+
+/** Per-call options. `signal` aborts the request and, in keyless mode, the
+ * proof-of-work search. */
+export interface DoDomainCallOptions {
+  signal?: AbortSignal;
+}
+
+const KEYLESS_KEY_PREFIX = "dd_ks_";
 
 // The one place a caller-supplied id becomes a path segment. Rejects an
 // empty/blank id client-side (status 0 — no request was sent) rather than
@@ -172,14 +227,46 @@ function sessionPath(sessionId: string): string {
 
 export class DoDomain {
   private readonly baseUrl: string;
-  private readonly secretKey: string;
+  /** The `dd_sk_` key, or null on a keyless client. */
+  private readonly secretKey: string | null;
   private readonly fetchImpl: typeof fetch;
+  /** Keyless mode only: the `dd_ks_` key, once a keyless start returned it. */
+  private keylessKeyValue: string | null = null;
+  private readonly proofTimeoutMs: number;
+  /** An anonymous keyless start in flight, so concurrent creates on a fresh
+   * client wait for its key instead of each starting a keyless app. */
+  private keylessStart: Promise<unknown> | null = null;
 
   constructor(opts: DoDomainOptions) {
-    if (!opts.secretKey?.startsWith("dd_sk_")) {
-      throw new Error("DoDomain: a secret key (dd_sk_…) is required");
+    this.proofTimeoutMs = KEYLESS_PROOF_DEFAULT_TIMEOUT_MS;
+    if (opts.keyless === true) {
+      if (opts.secretKey !== undefined) {
+        throw new Error("DoDomain: pass either secretKey or keyless: true, not both");
+      }
+      if (opts.keylessKey !== undefined && !opts.keylessKey.startsWith(KEYLESS_KEY_PREFIX)) {
+        throw new Error("DoDomain: keylessKey must be a keyless key (dd_ks_…)");
+      }
+      this.secretKey = null;
+      this.keylessKeyValue = opts.keylessKey ?? null;
+      const proofTimeoutMs = opts.proofTimeoutMs ?? KEYLESS_PROOF_DEFAULT_TIMEOUT_MS;
+      if (
+        !Number.isFinite(proofTimeoutMs) ||
+        proofTimeoutMs <= 0 ||
+        proofTimeoutMs > KEYLESS_PROOF_MAX_TIMEOUT_MS
+      ) {
+        throw new Error(
+          `DoDomain: proofTimeoutMs must be a number of milliseconds above 0 and at most ${KEYLESS_PROOF_MAX_TIMEOUT_MS} (a challenge lives 5 minutes)`,
+        );
+      }
+      this.proofTimeoutMs = proofTimeoutMs;
+    } else {
+      if (!opts.secretKey?.startsWith("dd_sk_")) {
+        throw new Error(
+          "DoDomain: a secret key (dd_sk_…) is required. To try DoDomain with no account, use new DoDomain({ keyless: true }).",
+        );
+      }
+      this.secretKey = opts.secretKey;
     }
-    this.secretKey = opts.secretKey;
     // FIX(F-010): was "https://api.dodomain.io" — that subdomain is not
     // registered/served; app.dodomain.io is the one origin that actually
     // serves both /api/v1/* and /connect/:token (see packages/core/src/origin.ts).
@@ -187,8 +274,41 @@ export class DoDomain {
     this.fetchImpl = opts.fetchImpl ?? fetch;
   }
 
+  /**
+   * Keyless mode only: the `dd_ks_` key of this client's keyless app, or null
+   * before the first `sessions.create` returned one (and always null on a
+   * secret-key client). It is returned once; persist it and pass it back as
+   * `keylessKey` to keep using the same app from another process.
+   */
+  get keylessKey(): string | null {
+    return this.keylessKeyValue;
+  }
+
   readonly sessions = {
-    create: async (input: CreateSessionInput): Promise<ConnectSessionSummary> => {
+    /**
+     * `POST /api/v1/sessions` — mint a connect session; hand `connectUrl` to
+     * your user.
+     *
+     * On a keyless client (`new DoDomain({ keyless: true })`) this calls
+     * `POST /api/v1/keyless/sessions` instead: the first call solves the proof
+     * of work the API asks for (about 1 to 3 seconds at the usual 20 bits) and
+     * retries once with it, then the client keeps the returned `dd_ks_` key
+     * and later calls need no proof. The result then carries `keyless`: the
+     * allowance and the `claimUrl` that moves the app into an account. A
+     * keyless refusal throws `DoDomainKeylessError` (branch on `code`). On a
+     * keyless client, `appName` names the app on the hosted connect page (the
+     * first call only); a secret-key client refuses it.
+     */
+    create: async (
+      input: CreateSessionInput & Pick<CreateKeylessSessionInput, "appName">,
+      options: DoDomainCallOptions = {},
+    ): Promise<ConnectSessionSummary> => {
+      if (this.secretKey === null) return this.createKeylessSession(input, options.signal);
+      if (input.appName !== undefined) {
+        throw new DoDomainError("invalid_request", 0, {
+          appName: ["appName names a keyless app; a secret-key client's app already has its name"],
+        });
+      }
       // Validate the caller's own input against the SAME schema the server
       // enforces, before it ever crosses the network — a bad call fails fast
       // with a DoDomainError (status 0: no request was sent), not a round
@@ -197,7 +317,9 @@ export class DoDomain {
       if (!parsedInput.success) {
         throw new DoDomainError("invalid_request", 0, parsedInput.error.flatten());
       }
-      return this.request("POST", "/api/v1/sessions", parsedInput.data, zCreateSessionResponse);
+      return this.request("POST", "/api/v1/sessions", parsedInput.data, zCreateSessionResponse, {
+        signal: options.signal,
+      });
     },
 
     /**
@@ -485,19 +607,163 @@ export class DoDomain {
       ),
   };
 
+  readonly keyless = {
+    /**
+     * `GET /api/v1/keyless` — the keyless app's allowance and claim link.
+     * Keyless mode only, and only once the client holds a `dd_ks_` key (after
+     * the first `sessions.create`, or from `keylessKey`); before that it throws
+     * `KEYLESS_KEY_MISSING` with `status: 0`.
+     */
+    status: async (options: DoDomainCallOptions = {}): Promise<KeylessStatus> => {
+      const key = this.keylessKeyValue;
+      if (key === null) {
+        throw new DoDomainKeylessError(
+          "keyless_key_missing",
+          0,
+          {
+            message:
+              this.secretKey === null
+                ? "This keyless client has no dd_ks_ key yet: create a session first, or pass keylessKey."
+                : "keyless.status() reads a keyless app; this client uses a secret key.",
+          },
+          "KEYLESS_KEY_MISSING",
+        );
+      }
+      return this.send("GET", "/api/v1/keyless", undefined, zKeylessStatusResponse, {
+        authorization: `Bearer ${key}`,
+        signal: options.signal,
+      });
+    },
+  };
+
+  /** The keyless arm of sessions.create. */
+  private async createKeylessSession(
+    input: CreateKeylessSessionInput & { appId?: string },
+    signal: AbortSignal | undefined,
+  ): Promise<KeylessConnectSessionSummary> {
+    if (input.appId !== undefined) {
+      throw new DoDomainError("invalid_request", 0, {
+        appId: ["a keyless client has no appId to pass: its dd_ks_ key is its app"],
+      });
+    }
+    const parsed = zCreateKeylessSessionInput.safeParse(input);
+    if (!parsed.success) {
+      throw new DoDomainError("invalid_request", 0, parsed.error.flatten());
+    }
+    // A fresh client with a start already in flight waits for it, so N
+    // concurrent creates start ONE keyless app (the network's daily share of
+    // starts is small), then reuse its key.
+    // Each waiter still honours its OWN signal: aborting one create stops its
+    // wait without touching the start the others are waiting on.
+    while (this.keylessKeyValue === null && this.keylessStart !== null) {
+      await untilSettledOrAborted(this.keylessStart, signal);
+    }
+    const key = this.keylessKeyValue;
+    if (key !== null) {
+      return this.postKeylessSession(parsed.data, { authorization: `Bearer ${key}` }, signal);
+    }
+    const start = this.startKeylessApp(parsed.data, signal);
+    this.keylessStart = start;
+    try {
+      return await start;
+    } finally {
+      if (this.keylessStart === start) this.keylessStart = null;
+    }
+  }
+
+  /** An anonymous start: the 428 challenge, the solve, the retry with the
+   * proof, and at most ONE more solve when that retry is refused because the
+   * network now needs a harder proof (`proof_too_easy`) or the challenge
+   * expired while solving (`proof_expired`). */
+  private async startKeylessApp(
+    body: CreateKeylessSessionInput,
+    signal: AbortSignal | undefined,
+  ): Promise<KeylessConnectSessionSummary> {
+    let refusal: DoDomainKeylessError;
+    try {
+      return await this.postKeylessSession(body, {}, signal);
+    } catch (error) {
+      if (!(error instanceof DoDomainKeylessError) || error.code !== "KEYLESS_PROOF_REQUIRED") {
+        throw error;
+      }
+      refusal = error;
+    }
+    for (let solves = 1; ; solves++) {
+      const challenge = readProofChallenge(refusal);
+      const proof = await solveKeylessProof(challenge.challenge, challenge.difficultyBits, {
+        signal,
+        timeoutMs: this.proofTimeoutMs,
+      });
+      try {
+        return await this.postKeylessSession(body, { [challenge.header]: proof }, signal);
+      } catch (error) {
+        // Anything else, or a third 428, propagates: retrying forever would
+        // hide a network that is being throttled or a proof that never holds.
+        if (solves >= KEYLESS_MAX_SOLVES || !isRetryableProofRefusal(error)) throw error;
+        refusal = error;
+      }
+    }
+  }
+
+  private async postKeylessSession(
+    body: CreateKeylessSessionInput,
+    headers: Record<string, string>,
+    signal: AbortSignal | undefined,
+  ): Promise<KeylessConnectSessionSummary> {
+    const result = await this.send(
+      "POST",
+      "/api/v1/keyless/sessions",
+      body,
+      zKeylessSessionResponse,
+      { ...headers, signal },
+    );
+    if (result.keyless.key !== undefined) this.keylessKeyValue = result.keyless.key;
+    return result;
+  }
+
+  /** A call authorized by the secret key. A keyless client has none, and the
+   * API refuses its dd_ks_ key everywhere but the keyless routes, so it fails
+   * here without a request. */
   private async request<T>(
     method: string,
     path: string,
     body: unknown,
     schema: z.ZodType<T>,
+    options: DoDomainCallOptions = {},
   ): Promise<T> {
+    if (this.secretKey === null) {
+      throw new DoDomainKeylessError(
+        "keyless_mode",
+        0,
+        {
+          message: `A keyless client can only create sessions and read keyless.status(). ${method} ${path} needs a secret key: claim the keyless app (the claimUrl on its sessions) and use its dd_sk_ key.`,
+        },
+        "KEYLESS_MODE",
+      );
+    }
+    return this.send(method, path, body, schema, {
+      authorization: `Bearer ${this.secretKey}`,
+      signal: options.signal,
+    });
+  }
+
+  private async send<T>(
+    method: string,
+    path: string,
+    body: unknown,
+    schema: z.ZodType<T>,
+    options: { authorization?: string; signal?: AbortSignal; [header: string]: unknown },
+  ): Promise<T> {
+    const { signal, ...extra } = options;
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    for (const [name, value] of Object.entries(extra)) {
+      if (typeof value === "string") headers[name] = value;
+    }
     const res = await this.fetchImpl(this.baseUrl + path, {
       method,
-      headers: {
-        authorization: `Bearer ${this.secretKey}`,
-        "content-type": "application/json",
-      },
+      headers,
       body: body === undefined ? undefined : JSON.stringify(body),
+      ...(signal ? { signal } : {}),
     });
     const text = await res.text();
 
@@ -505,25 +771,56 @@ export class DoDomain {
     try {
       json = text ? JSON.parse(text) : {};
     } catch {
-      // FIX(F-008): a non-JSON body (e.g. a proxy's 502 HTML page) used to
-      // throw a raw SyntaxError here, escaping this SDK's own declared
-      // DoDomainError contract. Every failure this SDK throws is now a
-      // DoDomainError, never a raw platform error.
-      throw new DoDomainError("non_json_response", res.status, text);
+      throw new DoDomainError("non_json_response", res.status, redactKeylessKeys(text));
     }
 
-    if (!res.ok) {
-      const errBody = json as { error?: string };
-      throw new DoDomainError(errBody.error ?? `HTTP ${res.status}`, res.status, json);
-    }
+    if (!res.ok) throw errorFromResponse(res.status, json);
 
     // FIX(F-008): the response body used to be returned as `json as T` — an
     // unchecked type assertion, no runtime validation. Now validated against
     // the same core schema the server's route is typed against.
     const parsed = schema.safeParse(json);
     if (!parsed.success) {
-      throw new DoDomainError("invalid_response_shape", res.status, json);
+      // The body is attached for debugging; a keyless start's carries the
+      // dd_ks_ key, which never belongs in an error.
+      throw new DoDomainError("invalid_response_shape", res.status, redactKeylessKeys(json));
     }
     return parsed.data;
   }
+}
+
+/** A keyless start solves at most this many proofs: the first challenge, and
+ * one fresh one when the proved retry is refused as too easy or expired. */
+const KEYLESS_MAX_SOLVES = 2;
+
+/** A proved retry the API refused because the proof went stale, not because
+ * it was wrong: worth exactly one fresh solve. */
+function isRetryableProofRefusal(error: unknown): error is DoDomainKeylessError {
+  if (!(error instanceof DoDomainKeylessError) || error.code !== "KEYLESS_PROOF_REQUIRED") {
+    return false;
+  }
+  const reason = error.details?.reason;
+  return reason === "proof_too_easy" || reason === "proof_expired";
+}
+
+/** Wait for `pending` to settle either way, or reject with the signal's reason
+ * as soon as `signal` aborts, whichever comes first. */
+function untilSettledOrAborted(
+  pending: Promise<unknown>,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  const settled = pending.then(
+    () => undefined,
+    () => undefined,
+  );
+  if (signal === undefined) return settled;
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<void>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    void settled.then(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    });
+  });
 }

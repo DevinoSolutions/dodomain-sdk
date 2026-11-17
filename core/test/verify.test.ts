@@ -126,6 +126,57 @@ function authoritativeReturning(
   return async () => resolved;
 }
 
+test("verification queries the parent authority when recursive NS followed a CNAME", async () => {
+  const zones: string[] = [];
+  const record: ExpectedRecord = {
+    fqdn: "www.delegated.example.com",
+    type: "CNAME",
+    expect: "target.net",
+  };
+  const deps: VerifyDeps = {
+    resolver: fakeResolver({
+      resolveNs: async (host) => (host === record.fqdn ? ["ns.target.net"] : ["ns.source.net"]),
+      resolveCname: async (host) => (host === record.fqdn ? [record.expect] : []),
+    }),
+    authoritativeResolverFor: async (zone) => {
+      zones.push(zone);
+      return {
+        kind: "resolver",
+        resolver: fakeResolver({
+          resolveCname: async () => (zone === "delegated.example.com" ? [record.expect] : []),
+        }),
+      };
+    },
+  };
+  assert.equal((await verifyRecord(record, deps)).present, true);
+  const results = await verifyRecords([record], deps);
+  assert.equal(results[0]?.present, true);
+  assert.deepEqual(zones, ["delegated.example.com", "delegated.example.com"]);
+});
+
+test("an inconclusive CNAME lookup in the owning-zone walk keeps the cut and verification still runs", async () => {
+  const zones: string[] = [];
+  const record: ExpectedRecord = { fqdn: "www.example.com", type: "CNAME", expect: "target.net" };
+  const deps: VerifyDeps = {
+    resolver: fakeResolver({
+      resolveNs: async () => ["ns.target.net"],
+      resolveCname: async () => {
+        throw Object.assign(new Error("alias lookup failed"), { code: "ETIMEOUT" });
+      },
+    }),
+    authoritativeResolverFor: async (zone) => {
+      zones.push(zone);
+      return {
+        kind: "resolver",
+        resolver: fakeResolver({ resolveCname: async () => [record.expect] }),
+      };
+    },
+  };
+  assert.equal((await verifyRecord(record, deps)).present, true);
+  assert.equal((await verifyRecords([record], deps))[0]?.present, true);
+  assert.deepEqual(zones, ["www.example.com", "www.example.com"]);
+});
+
 test("FIXED(F-011, step 3): an authoritative SERVFAIL is reported as indeterminate, not absent — present stays fail-closed", async () => {
   const authResolver = fakeResolver({
     resolveCname: async () => {
@@ -236,7 +287,7 @@ test("an unregistered domain (apex NS NXDOMAIN + public resolver NXDOMAIN) is re
   assert.equal(result.authoritativeError, "ENOTFOUND"); // the NS query's own code, no longer discarded
   assert.equal(
     result.note,
-    "domain does not resolve — it may be unregistered, misspelled, or have no nameservers",
+    "domain does not resolve. It may be unregistered, misspelled, or have no nameservers",
   );
 });
 
@@ -505,6 +556,8 @@ function liveDelegationDeps(nsMap: Record<string, string[]> = LIVE_NS) {
       },
       // Public recursive resolvers all saw the record (8.8.8.8, 9.9.9.9, 1.1.1.1).
       resolveTxt: async () => [[GLAUCA_TXT]],
+      // Positive NS answers above belong to real cuts, never aliases.
+      resolveCname: async () => [],
     }),
     authoritativeResolverFor: async (zone: string) => {
       zonesAsked.push(zone);
@@ -644,4 +697,70 @@ test("verifyRecords with a caller-supplied zone skips the walk entirely", async 
 
   assert.equal(results[0]?.outcome, "verified");
   assert.deepEqual(nsAsked, [], "a pre-resolved zone costs no DNS at all");
+});
+
+// GoDaddy publishes an SPFM merge as `include:<id>._spfm.<zone>` at the apex
+// and the merged terms at that name (live 2026-11-04, dodomain.site,
+// session cmw1tehm000ar07p984u6ki4q). The verifier follows that ONE hop on the
+// same resolver it read the apex record from, and nothing else.
+test("an SPF record GoDaddy published through its _spfm indirection verifies", async () => {
+  const apex = "v=spf1 include:dc-771c848bd5._spfm.dodomain.site ~all";
+  const spfmHost = "dc-771c848bd5._spfm.dodomain.site";
+  const godaddyTxt = (spfmBody: string | null) => async (host: string) => {
+    if (host === "dodomain.site") return [[apex]];
+    if (host === spfmHost && spfmBody !== null) return [[spfmBody]];
+    throw Object.assign(new Error("nxdomain"), { code: "ENOTFOUND" });
+  };
+  const record: ExpectedRecord = {
+    fqdn: "dodomain.site",
+    type: "TXT",
+    expect: "v=spf1 include:amazonses.com ~all",
+  };
+
+  const served = await verifyRecord(record, {
+    zone: "dodomain.site",
+    authoritativeResolverFor: authoritativeReturning(
+      fakeResolver({ resolveTxt: godaddyTxt("v=spf1 include:amazonses.com ~all") }),
+    ),
+    resolver: fakeResolver({ resolveTxt: godaddyTxt("v=spf1 include:amazonses.com ~all") }),
+  });
+  assert.equal(served.present, true);
+  assert.equal(served.outcome, "verified");
+  assert.deepEqual(served.authoritativeFound, [apex]);
+
+  // The included record not served (yet) on the public side: propagating.
+  const propagating = await verifyRecord(record, {
+    zone: "dodomain.site",
+    authoritativeResolverFor: authoritativeReturning(
+      fakeResolver({ resolveTxt: godaddyTxt("v=spf1 include:amazonses.com ~all") }),
+    ),
+    resolver: fakeResolver({ resolveTxt: godaddyTxt(null) }),
+  });
+  assert.equal(propagating.outcome, "propagating");
+
+  // The included record lacks the term: still absent, never a match.
+  const wrong = await verifyRecord(record, {
+    zone: "dodomain.site",
+    authoritativeResolverFor: authoritativeReturning(
+      fakeResolver({ resolveTxt: godaddyTxt("v=spf1 include:_spf.google.com ~all") }),
+    ),
+    resolver: fakeResolver({ resolveTxt: godaddyTxt("v=spf1 include:_spf.google.com ~all") }),
+  });
+  assert.equal(wrong.present, false);
+  assert.equal(wrong.outcome, "absent");
+
+  // A _spfm include in ANOTHER zone is never followed (the fake would throw
+  // if it were asked for that name).
+  const foreign = "v=spf1 include:dc-1._spfm.other.example ~all";
+  const foreignTxt = async (host: string) => {
+    if (host === "dodomain.site") return [[foreign]];
+    throw new Error(`followed a foreign include: ${host}`);
+  };
+  const notFollowed = await verifyRecord(record, {
+    zone: "dodomain.site",
+    authoritativeResolverFor: authoritativeReturning(fakeResolver({ resolveTxt: foreignTxt })),
+    resolver: fakeResolver({ resolveTxt: foreignTxt }),
+  });
+  assert.equal(notFollowed.present, false);
+  assert.equal(notFollowed.outcome, "absent");
 });

@@ -46,16 +46,14 @@ test("refuses a CNAME at the apex (protocol constraint)", () => {
   );
 });
 
-test("refuses an unprefixed (arbitrary) TXT value", () => {
-  assert.throws(
-    () => compileToRecipe([{ type: "TXT", name: "_x", value: "anything goes" }], PROVIDER_ID),
-    RecipeError,
-  );
+test("an unprefixed (arbitrary) TXT value is never domain-verification; it takes a dns-records add slot", () => {
+  const r = compileToRecipe([{ type: "TXT", name: "_x", value: "anything goes" }], PROVIDER_ID);
+  assert.equal(r.serviceId, "dns-records");
+  assert.deepEqual(r.groupIds, ["txt1"]);
 });
 
 test("refuses a record set no template expresses (no arbitrary records[] over Domain Connect)", () => {
-  // SPF with no include + an MX: MX is in no template (v1 exclusion) and a
-  // bare `~all` carries no mechanism to merge.
+  // SPF with no term to merge + an MX with no priority: no slot can take either.
   assert.throws(
     () =>
       compileToRecipe(
@@ -67,23 +65,23 @@ test("refuses a record set no template expresses (no arbitrary records[] over Do
       ),
     RecipeError,
   );
-  // Two records that each match a template on their own but no template together.
-  assert.throws(
-    () =>
-      compileToRecipe(
-        [
-          { type: "CNAME", name: "www", value: "t.example" },
-          { type: "CNAME", name: "blog", value: "t.example" },
-        ],
-        PROVIDER_ID,
-      ),
-    RecipeError,
-  );
 });
 
-test("refuses unsupported record types", () => {
+test("two records that each match a shaped template alone, but none together, fall through to dns-records", () => {
+  const r = compileToRecipe(
+    [
+      { type: "CNAME", name: "www", value: "t.example" },
+      { type: "CNAME", name: "blog", value: "t.example" },
+    ],
+    PROVIDER_ID,
+  );
+  assert.equal(r.serviceId, "dns-records");
+  assert.deepEqual(r.groupIds, ["cname1", "cname2"]);
+});
+
+test("refuses record types no session can carry", () => {
   assert.throws(
-    () => compileToRecipe([{ type: "MX", name: "@", value: "mx.example" }], PROVIDER_ID),
+    () => compileToRecipe([{ type: "SRV", name: "_sip._tcp", value: "sip.example" }], PROVIDER_ID),
     RecipeError,
   );
 });
@@ -109,17 +107,14 @@ test("CNAME + the ownership TXT UNDER it -> custom-subdomain-cname-with-verifica
 });
 
 test("CNAME + an ownership TXT at the ZONE apex is NOT the with-verification template (the TXT must hang off the host)", () => {
-  assert.throws(
-    () =>
-      compileToRecipe(
-        [
-          { type: "CNAME", name: "status", value: "cname.uptimely.io" },
-          { type: "TXT", name: "_dodomain-challenge", value: `${VERIFY_PREFIX}tok` },
-        ],
-        PROVIDER_ID,
-      ),
-    RecipeError,
+  const r = compileToRecipe(
+    [
+      { type: "CNAME", name: "status", value: "cname.uptimely.io" },
+      { type: "TXT", name: "_dodomain-challenge", value: `${VERIFY_PREFIX}tok` },
+    ],
+    PROVIDER_ID,
   );
+  assert.equal(r.serviceId, "dns-records");
 });
 
 test("apex A + TXT -> apex-a-with-verification with only the filled groups; adding AAAA fills them all", () => {
@@ -147,11 +142,11 @@ test("apex A + TXT -> apex-a-with-verification with only the filled groups; addi
   assert.equal(full.groupIds, undefined);
 });
 
-test("apex A without the ownership TXT is refused (the TXT is the non-optional shape)", () => {
-  assert.throws(
-    () => compileToRecipe([{ type: "A", name: "@", value: "203.0.113.10" }], PROVIDER_ID),
-    RecipeError,
-  );
+test("apex A without the ownership TXT is not apex-a-with-verification (the TXT is its non-optional shape)", () => {
+  const r = compileToRecipe([{ type: "A", name: "@", value: "203.0.113.10" }], PROVIDER_ID);
+  assert.equal(r.serviceId, "website");
+  assert.deepEqual(r.variables, { ipv4a: "203.0.113.10" });
+  assert.deepEqual(r.groupIds, ["a-a"]);
 });
 
 test("SPF include + DKIM CNAME + DMARC -> email-authentication, selector extracted from the DKIM host", () => {
@@ -190,15 +185,16 @@ test("a DKIM key published as TXT fills the dkim-txt group instead; the fixed pr
   assert.equal(r.serviceId, "email-authentication");
   assert.deepEqual(r.variables, { dkimSelector: "s1", dkimTxt: "k=rsa; p=MIGfMA0G" });
   assert.deepEqual(r.groupIds, ["dkim-txt"]);
-  // "v=DKIM1;k=rsa" (no space) could be applied but would never verify byte-exactly — refused.
-  assert.throws(
-    () =>
-      compileToRecipe(
-        [{ type: "TXT", name: "s1._domainkey", value: "v=DKIM1;k=rsa;p=MIGf" }],
-        PROVIDER_ID,
-      ),
-    RecipeError,
+  // "v=DKIM1;k=rsa" (no space) would never verify byte-exactly through the
+  // fixed "v=DKIM1; " prefix, so it is not email-authentication;
+  // email-sending writes the whole key verbatim instead.
+  const verbatim = compileToRecipe(
+    [{ type: "TXT", name: "s1._domainkey", value: "v=DKIM1;k=rsa;p=MIGf" }],
+    PROVIDER_ID,
   );
+  assert.equal(verbatim.serviceId, "email-sending");
+  assert.deepEqual(verbatim.groupIds, ["dkim-txt"]);
+  assert.deepEqual(verbatim.variables, { dkimTxtSelector: "s1", dkimTxt: "v=DKIM1;k=rsa;p=MIGf" });
 });
 
 test("a CNAME at <selector>._domainkey is DKIM, not a custom subdomain (registry order is load-bearing)", () => {
@@ -209,32 +205,28 @@ test("a CNAME at <selector>._domainkey is DKIM, not a custom subdomain (registry
   assert.equal(r.serviceId, "email-authentication");
 });
 
-test("two DKIM records with DIFFERENT selectors cannot share one template application", () => {
-  assert.throws(
-    () =>
-      compileToRecipe(
-        [
-          { type: "CNAME", name: "s1._domainkey", value: "s1.dkim.mailer.example" },
-          { type: "CNAME", name: "s2._domainkey", value: "s2.dkim.mailer.example" },
-        ],
-        PROVIDER_ID,
-      ),
-    RecipeError,
+test("two DKIM records with DIFFERENT selectors cannot share one email-authentication application", () => {
+  const r = compileToRecipe(
+    [
+      { type: "CNAME", name: "s1._domainkey", value: "s1.dkim.mailer.example" },
+      { type: "CNAME", name: "s2._domainkey", value: "s2.dkim.mailer.example" },
+    ],
+    PROVIDER_ID,
   );
+  assert.equal(r.serviceId, "email-sending");
+  assert.deepEqual(r.groupIds, ["dkim-cname-1", "dkim-cname-2"]);
 });
 
-test("an SPF record with more than one mechanism is entered by hand, never merged blind", () => {
-  assert.throws(
-    () =>
-      compileToRecipe(
-        [{ type: "TXT", name: "@", value: "v=spf1 include:a.example ip4:203.0.113.10 ~all" }],
-        PROVIDER_ID,
-      ),
-    RecipeError,
+test("an SPF record with more than one mechanism is not email-authentication; dns-records merges every term", () => {
+  const r = compileToRecipe(
+    [{ type: "TXT", name: "@", value: "v=spf1 include:a.example ip4:203.0.113.10 ~all" }],
+    PROVIDER_ID,
   );
+  assert.equal(r.serviceId, "dns-records");
+  assert.deepEqual(r.variables, { spf1host: "@", spf1rules: "include:a.example ip4:203.0.113.10" });
 });
 
-test("MX is never applied over Domain Connect, even beside a full email-authentication set", () => {
+test("MX is never applied without its priority, even beside a full email-authentication set", () => {
   assert.throws(
     () =>
       compileToRecipe(
@@ -246,4 +238,13 @@ test("MX is never applied over Domain Connect, even beside a full email-authenti
       ),
     RecipeError,
   );
+  const r = compileToRecipe(
+    [
+      { type: "TXT", name: "@", value: "v=spf1 include:_spf.mailer.example ~all" },
+      { type: "MX", name: "@", value: "mx.mailer.example", priority: 10 },
+    ],
+    PROVIDER_ID,
+  );
+  assert.equal(r.serviceId, "dns-records");
+  assert.deepEqual(r.groupIds, ["spf1", "mx1"]);
 });

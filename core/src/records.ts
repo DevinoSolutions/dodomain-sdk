@@ -39,6 +39,28 @@ export const zRecord = z.object({
 
 export const zRecords = z.array(zRecord);
 
+/**
+ * THE cap on how many records one connect session may carry (T-9466), enforced
+ * at CREATION only: `zCreateSessionInput.records` (schemas.ts) applies it, so
+ * POST /api/v1/sessions, the MCP `create_connect_session` tool (which posts to
+ * that route and takes the same schema as its input) and the node SDK's
+ * pre-flight parse all refuse the same request, and the published OpenAPI
+ * carries it as `maxItems`. `zRecords` itself stays unbounded on purpose: it
+ * also parses rows ALREADY STORED (lib/session-records.ts), and a cap there
+ * would turn an old row into a parse failure instead of refusing new input.
+ *
+ * Why 50: nothing bounded it before, and every record costs work downstream —
+ * one authoritative DNS lookup per record on every verify, session poll and
+ * connection re-check, and one provider API write per record on a one-click
+ * apply. The largest legitimate shapes are far below it: the biggest Domain
+ * Connect template (`email-authentication`) is 4 records (SPF + two DKIM shapes
+ * + DMARC); a full mail setup (Google Workspace's 5 MX + SPF + DKIM + DMARC +
+ * a verification TXT, or SES's 3 DKIM CNAMEs + MX + SPF + DMARC + verify) is
+ * about 10; mail plus web plus a few extra selectors stays under 25. 50 leaves
+ * twice that headroom while keeping one session's DNS fan-out bounded.
+ */
+export const MAX_SESSION_RECORDS = 50;
+
 // The exported NAME is preserved (was a hand-written interface) so every
 // existing `import type { SessionRecord }` consumer (apply.ts, verify route,
 // cf/callback route, the hosted connect page) is unaffected — only its
@@ -137,7 +159,7 @@ export function recordHostWarnings(records: SessionRecord[], domain: string): Re
       const fqdn = fqdnFor(r.host, domain);
       return {
         code: "duplicate_host_label" as const,
-        message: `host "${r.host}" repeats the leading label of domain "${domain}" — this session will be verified at "${fqdn}". Use host "@" if you meant "${domain}".`,
+        message: `host "${r.host}" repeats the leading label of domain "${domain}". This session will be verified at "${fqdn}". Use host "@" if you meant "${domain}".`,
         host: r.host,
         fqdn,
       };

@@ -80,6 +80,71 @@ export interface ConnectSessionSummary {
   records: ComposedDnsRecord[];
   /** Present only when there is something worth saying about the request. */
   warnings?: SessionWarning[];
+  /** Set on every session a keyless client creates (`new DoDomain({ keyless:
+   * true })`), never on a secret-key one: the keyless app's allowance and the
+   * link that claims it into an account. */
+  keyless?: KeylessSessionInfo;
+}
+
+/** Where a keyless app stands against its lifetime allowance (pin: core
+ * zKeylessAllowance). `open` counts unfinished sessions, which hold a place
+ * until they connect or expire. */
+export interface KeylessAllowance {
+  limit: number;
+  used: number;
+  open: number;
+  remaining: number;
+}
+
+/** The `keyless` block of a keyless create response. */
+export interface KeylessSessionInfo {
+  /** The `dd_ks_` key, present ONLY on the response that started the keyless
+   * app. The client keeps it for its next calls; persist it (`dodomain.keylessKey`)
+   * to reuse the same app from another process. */
+  key?: string;
+  appId: string;
+  allowance: KeylessAllowance;
+  /** Open it signed in to adopt this app into an account: its connections come
+   * with it, and it gets a `dd_sk_` secret key. The key rides in the fragment. */
+  claimUrl: string;
+  /** One sentence on what claiming unlocks. */
+  unlock: string;
+  docs: string;
+}
+
+/** A session a keyless client created (pin: core zKeylessSessionResponse). */
+export type KeylessConnectSessionSummary = ConnectSessionSummary & {
+  /** A keyless session always checks real DNS. */
+  mode: "live";
+  keyless: KeylessSessionInfo;
+};
+
+/** Body for sessions.create on a keyless client: the same body without
+ * `appId`, since a keyless key IS its app, plus an optional `appName` (pin:
+ * core zCreateKeylessSessionInput). */
+export type CreateKeylessSessionInput = Omit<CreateSessionInput, "appId"> & {
+  /**
+   * The name your end user sees on DoDomain's hosted connect page, next to a
+   * "Test app" chip. Only the call that STARTS the keyless app uses it (later
+   * calls with the key reuse the app as it is). It is never sent to a DNS
+   * provider until the app is claimed. 1 to 60 characters, trimmed; absent,
+   * the app is named "Test app".
+   */
+  appName?: string;
+};
+
+/** `keyless.status()`: the keyless app's allowance and claim link (pin: core
+ * zKeylessStatusResponse). */
+export interface KeylessStatus {
+  appId: string;
+  allowance: KeylessAllowance;
+  claimUrl: string;
+  unlock: string;
+  docs: string;
+  /** ISO 8601 datetime. */
+  createdAt: string;
+  /** ISO 8601 datetime, or null before the key was used again. */
+  lastUsedAt: string | null;
 }
 
 /**
@@ -327,9 +392,10 @@ export interface CheckDomainResult {
   };
   guide: ProviderGuide;
   /** true ⇒ the domain's DNS provider offers one-click for at least one typical
-   * setup: tier 1 (Cloudflare OAuth), or tier 2 where the provider serves at
-   * least one of DoDomain's Domain Connect templates. `tier: 2` alone only means
-   * the provider speaks Domain Connect (GoDaddy does, and serves none, so
+   * setup: tier 1 (Cloudflare OAuth), tier 2 where the provider serves at least
+   * one of DoDomain's Domain Connect templates, or a provider whose own one-click
+   * integration is enabled (Porkbun, reported at tier 3). `tier: 2` alone only
+   * means the provider speaks Domain Connect (IONOS does, and serves none, so
    * `false`). Fails closed. A session still needs a Pro or Scale plan for it. */
   oneClickAvailable: boolean;
 }

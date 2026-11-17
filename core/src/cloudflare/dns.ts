@@ -9,6 +9,7 @@ import { describeField, readField } from "./upstream-json.ts";
 import { recordValueMatches, type RecordType } from "../record-capabilities.ts";
 
 export class CfDnsError extends Error {}
+export class CfZoneNotFoundError extends CfDnsError {}
 
 interface CfEnvelope<T> {
   success: boolean;
@@ -56,7 +57,7 @@ async function cfApi<T>(input: ApiInput): Promise<CfEnvelope<T>> {
             `${describeField(readField(e, "code"))}: ${describeField(readField(e, "message"))}`,
         )
         .join("; ") || `HTTP ${res.status}`;
-    throw new CfDnsError(`Cloudflare API error — ${msg}`);
+    throw new CfDnsError(`Cloudflare API error: ${msg}`);
   }
   // Cloudflare's envelope is not validated field-by-field here: the shape of
   // `result` is per-endpoint and every caller below re-reads it defensively.
@@ -87,8 +88,8 @@ export async function resolveZoneId(
     });
     if (env.result?.[0]) return env.result[0].id;
   }
-  throw new CfDnsError(
-    `no Cloudflare zone found for "${domain}" — the account you approved doesn't have that domain. ` +
+  throw new CfZoneNotFoundError(
+    `no Cloudflare zone found for "${domain}". The account you approved doesn't have that domain. ` +
       `Use the root domain (e.g. getuptimely.com), or a domain that lives in the approved Cloudflare account.`,
   );
 }

@@ -5,8 +5,14 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { Resolver } from "node:dns/promises";
 
-import { detectProvider, type DetectDeps } from "../src/detect.ts";
+import {
+  detectProvider,
+  detectionFromStoredLabel,
+  dnsProviderForNameServers,
+  type DetectDeps,
+} from "../src/detect.ts";
 
 // resolveNs fake returning a fixed NS set; optionally records the zone it was asked for.
 function nsReturning(ns: string[], calls?: string[]): NonNullable<DetectDeps["resolveNs"]> {
@@ -37,6 +43,57 @@ function discoverReturning(
 const discoverThrows: NonNullable<DetectDeps["discover"]> = async () => {
   throw new Error("no _domainconnect record");
 };
+
+test("an alias's recursive NS answer cannot select its target's provider or discovery zone", async () => {
+  const discovered: string[] = [];
+  const result = await detectProvider("www.delegated.example.com", {
+    resolveNs: async (host) =>
+      host === "www.delegated.example.com" ? ["ana.ns.cloudflare.com"] : ["ns01.domaincontrol.com"],
+    resolveCname: async (host) => (host === "www.delegated.example.com" ? ["target.net"] : []),
+    discover: async (zone) => {
+      discovered.push(zone);
+      return discoverReturning("godaddy", "GoDaddy")(zone);
+    },
+  });
+  assert.equal(result.zone, "delegated.example.com");
+  assert.equal(result.provider, "godaddy");
+  assert.equal(result.tier, 2);
+  assert.deepEqual(result.nameServers, ["ns01.domaincontrol.com"]);
+  assert.deepEqual(discovered, ["delegated.example.com"]);
+});
+
+test("an inconclusive CNAME lookup keeps the cut, so detection still answers as it did before the alias check", async () => {
+  const discovered: string[] = [];
+  const result = await detectProvider("www.example.com", {
+    resolveNs: nsReturning(["ana.ns.cloudflare.com"]),
+    resolveCname: async () => {
+      throw Object.assign(new Error("alias lookup failed"), { code: "ESERVFAIL" });
+    },
+    discover: async (zone) => {
+      discovered.push(zone);
+      return discoverReturning("godaddy", "GoDaddy")(zone);
+    },
+  });
+  assert.equal(result.zone, "www.example.com");
+  assert.deepEqual(discovered, ["www.example.com"]);
+});
+
+test("detect with injected NS and discovery but no CNAME never opens a DNS query", async (t) => {
+  const realNs = t.mock.method(Resolver.prototype, "resolveNs", async () => {
+    throw new Error("unexpected real NS query");
+  });
+  const realCname = t.mock.method(Resolver.prototype, "resolveCname", async () => {
+    throw new Error("unexpected real CNAME query");
+  });
+  const result = await detectProvider("www.example.com", {
+    resolveNs: nsReturning(["ana.ns.cloudflare.com"]),
+    discover: discoverThrows,
+  });
+  assert.equal(result.zone, "www.example.com");
+  assert.equal(result.provider, "cloudflare");
+  assert.equal(realNs.mock.callCount(), 0);
+  assert.equal(realCname.mock.callCount(), 0);
+});
 
 test("Cloudflare NS → tier 1 OAuth, high confidence", async () => {
   const m = await detectProvider("shop.example.com", {
@@ -150,13 +207,181 @@ test("Squarespace NS → tier 3 guided", async () => {
   assert.equal(m.tier, 3);
 });
 
-test("Hostinger NS → tier 3 guided", async () => {
-  const m = await detectProvider("x.example.com", {
-    resolveNs: nsReturning(["ns1.hostinger.com"]),
+// Real Hostinger customer zones do not use hostinger-named NS: 0-360.info sits
+// on ns1/ns2.dns-parking.com and the lapsed 0-5feet.com on
+// ns1/ns2.dns-expired.com (both resolved live 2026-10-22); dns1.hostinger.com
+// serves Hostinger's own zones (hostinger.au, .be, .ch). The fake
+// ns1.hostinger.com this test used to pin matched no customer anywhere.
+for (const ns of [
+  ["ns1.dns-parking.com", "ns2.dns-parking.com"],
+  ["ns1.dns-expired.com", "ns2.dns-expired.com"],
+  ["dns1.hostinger.com", "dns2.hostinger.com"],
+]) {
+  test(`Hostinger NS ${ns[0]} → tier 3 guided`, async () => {
+    const m = await detectProvider("x.example.com", {
+      resolveNs: nsReturning(ns),
+      discover: discoverThrows,
+    });
+    assert.equal(m.provider, "hostinger");
+    assert.equal(m.tier, 3);
+  });
+}
+
+// ns-cloud-*.googledomains.com is shared by Google Cloud DNS and the
+// ex-Google-Domains zones Squarespace now runs. Zones resolved live 2026-10-22:
+// 0-9.dev answers Squarespace's Domain Connect (providerId squarespace.com),
+// kubernetes.io (a Cloud DNS zone) answers none.
+const GOOGLE_NS = [
+  "ns-cloud-a1.googledomains.com",
+  "ns-cloud-a2.googledomains.com",
+  "ns-cloud-a3.googledomains.com",
+  "ns-cloud-a4.googledomains.com",
+];
+
+test("googledomains.com NS with Squarespace's Domain Connect → Squarespace", async () => {
+  const m = await detectProvider("0-9.dev", {
+    resolveNs: nsReturning(GOOGLE_NS),
+    discover: discoverReturning("squarespace.com", "Squarespace"),
+  });
+  assert.equal(m.provider, "squarespace");
+  assert.equal(m.label, "Squarespace");
+  assert.equal(m.tier, 3, "Squarespace serves none of our templates: guided");
+  assert.equal(m.confidence, "high");
+});
+
+test("googledomains.com NS without Domain Connect → Google Cloud DNS, not Squarespace", async () => {
+  const m = await detectProvider("kubernetes.io", {
+    resolveNs: nsReturning(GOOGLE_NS),
     discover: discoverThrows,
   });
-  assert.equal(m.provider, "hostinger");
+  assert.equal(m.provider, "googleclouddns");
+  assert.equal(m.label, "Google Cloud DNS");
   assert.equal(m.tier, 3);
+});
+
+test("googledomains.com NS with another provider's Domain Connect stays Google Cloud DNS", async () => {
+  const m = await detectProvider("x.example.com", {
+    resolveNs: nsReturning(GOOGLE_NS),
+    discover: discoverReturning("acme-dns", "Acme DNS"),
+  });
+  assert.equal(m.provider, "googleclouddns");
+});
+
+test("the DNS-only answer for googledomains.com NS names both Google Cloud DNS and Squarespace", () => {
+  // The public DNS tools make no Domain Connect request, so they cannot split
+  // the shared ns-cloud-* set and must not pretend to.
+  const hit = dnsProviderForNameServers(GOOGLE_NS.map((ns) => `${ns}.`));
+  assert.equal(hit?.provider, "googleclouddns");
+  assert.equal(hit?.label, "Google Cloud DNS or Squarespace");
+  assert.equal(dnsProviderForNameServers(["ns1.dns-parking.com."])?.label, "Hostinger");
+});
+
+test("a wpengine-named NS no longer routes to the WordPress.com guide", async () => {
+  // WP Engine runs no customer nameservers (ns1.wpengine.com hosts no zones,
+  // shared-DNS lookup 2026-10-22); the old `\bwpengine` alternative claimed it.
+  const wp = await detectProvider("x.example.com", {
+    resolveNs: nsReturning(["ns1.wpengine.com"]),
+    discover: discoverThrows,
+  });
+  assert.equal(wp.provider, "unknown");
+  const wpcom = await detectProvider("x.example.com", {
+    resolveNs: nsReturning(["ns1.wordpress.com", "ns2.wordpress.com"]),
+    discover: discoverThrows,
+  });
+  assert.equal(wpcom.provider, "wordpress");
+});
+
+// T-6545 batch: each NS set is the one a real customer zone answered on
+// 2026-10-22 (zone named per row), sampled from a shared-DNS lookup.
+const NEW_GUIDED: Array<{ zone: string; ns: string[]; provider: string }> = [
+  {
+    zone: "0omph.org",
+    ns: ["ns41.worldnic.com", "ns42.worldnic.com"],
+    provider: "networksolutions",
+  },
+  {
+    zone: "000y.de",
+    ns: ["helium.ns.hetzner.de", "hydrogen.ns.hetzner.com", "oxygen.ns.hetzner.com"],
+    provider: "hetzner",
+  },
+  {
+    zone: "hetzner.com",
+    ns: ["ns.second-ns.com", "ns1.your-server.de", "ns3.second-ns.de"],
+    provider: "hetzner",
+  },
+  {
+    zone: "hetzner.cloud",
+    ns: ["ns1.first-ns.de", "robotns2.second-ns.de", "robotns3.second-ns.com"],
+    provider: "hetzner",
+  },
+  { zone: "0-1-1.com", ns: ["ns1.dyna-ns.net", "ns2.dyna-ns.net"], provider: "dynadot" },
+  {
+    zone: "0-16.com",
+    ns: ["launch1.spaceship.net", "launch2.spaceship.net"],
+    provider: "spaceship",
+  },
+  {
+    zone: "1000beats.ch",
+    ns: [
+      "ns1-01.azure-dns.com",
+      "ns2-01.azure-dns.net",
+      "ns3-01.azure-dns.org",
+      "ns4-01.azure-dns.info",
+    ],
+    provider: "azure",
+  },
+  {
+    zone: "0065.sg",
+    ns: ["ns1.linode.com", "ns2.linode.com", "ns5.linode.com"],
+    provider: "linode",
+  },
+  {
+    zone: "0-oo-0.com",
+    ns: ["dns1.name-services.com", "dns5.name-services.com"],
+    provider: "enom",
+  },
+];
+
+for (const row of NEW_GUIDED) {
+  test(`${row.provider} NS (${row.zone}) → tier 3 guided`, async () => {
+    const m = await detectProvider(row.zone, {
+      resolveNs: nsReturning(row.ns),
+      discover: discoverThrows,
+    });
+    assert.equal(m.provider, row.provider);
+    assert.equal(m.tier, 3);
+    assert.equal(m.confidence, "high");
+  });
+}
+
+// Netlify DNS and NS1's own customers share dnsN.p0N.nsone.net (jamstack.org
+// p01 is Netlify's, smashingmagazine.com p06 is plain NS1; 2026-10-23).
+test("an NS1-only zone is named Netlify DNS / NS1 and takes the guided path", async () => {
+  const m = await detectProvider("jamstack.org", {
+    resolveNs: nsReturning([
+      "dns1.p01.nsone.net",
+      "dns2.p01.nsone.net",
+      "dns3.p01.nsone.net",
+      "dns4.p01.nsone.net",
+    ]),
+    discover: discoverThrows,
+  });
+  assert.equal(m.provider, "netlify");
+  assert.equal(m.label, "Netlify DNS / NS1");
+  assert.equal(m.tier, 3);
+});
+
+test("a zone pairing NS1 with Squarespace's or Azure's NS is named for that host, not NS1", async () => {
+  const sq = await detectProvider("squarespace.com", {
+    resolveNs: nsReturning(["dns1.p06.nsone.net", "ns01.squarespacedns.com"]),
+    discover: discoverThrows,
+  });
+  assert.equal(sq.provider, "squarespace");
+  const az = await detectProvider("linkedin.com", {
+    resolveNs: nsReturning(["dns1.p09.nsone.net", "ns1-42.azure-dns.com"]),
+    discover: discoverThrows,
+  });
+  assert.equal(az.provider, "azure");
 });
 
 test("Cloudflare NS wins over a successful Domain Connect discovery (NS precedence)", async () => {
@@ -399,6 +624,17 @@ test("OVH NS → tier 3 guided", async () => {
   assert.equal(m.tier, 3);
 });
 
+test("OVH Canada NS (dnsNN.ovh.ca + nsNN.ovh.ca) → OVHcloud, tier 3 guided, never unknown", async () => {
+  // Observed live 2026-11-03 on oc.mrneon.online, a free OVH Canada zone.
+  const m = await detectProvider("x.example.com", {
+    resolveNs: nsReturning(["dns10.ovh.ca", "ns10.ovh.ca"]),
+    discover: discoverThrows,
+  });
+  assert.equal(m.provider, "ovh");
+  assert.equal(m.label, "OVHcloud");
+  assert.equal(m.tier, 3);
+});
+
 test("Gandi LiveDNS NS → tier 3 guided", async () => {
   const m = await detectProvider("x.example.com", {
     resolveNs: nsReturning(["ns-154-a.gandi.net", "ns-232-b.gandi.net"]),
@@ -489,4 +725,37 @@ test("dot-anchoring: hostnames merely ending in name.com / one.com stay unknown"
   });
   assert.equal(m.provider, "unknown");
   assert.equal(m.tier, 3);
+});
+
+// T-6553: the session row keeps only label + tier; detectionFromStoredLabel
+// rebuilds the rest. Pinned as a ROUND TRIP through every detectProvider
+// branch, so a change to either side that breaks the inverse fails here.
+test("detectionFromStoredLabel rebuilds provider, method and confidence from the stored label + tier for every detection branch", async () => {
+  const cases = [
+    { ns: ["ada.ns.cloudflare.com"], discover: discoverThrows },
+    { ns: ["ns01.domaincontrol.com"], discover: discoverThrows },
+    { ns: ["dns1.registrar-servers.com"], discover: discoverThrows },
+    { ns: ["ns1.as207960.net"], discover: discoverReturning("glauca.digital", "Glauca HexDNS") },
+    { ns: ["ns1.as207960.net"], discover: discoverThrows },
+  ];
+  for (const c of cases) {
+    const m = await detectProvider("x.example.com", {
+      resolveNs: nsReturning(c.ns),
+      discover: c.discover,
+    });
+    const rebuilt = detectionFromStoredLabel(m.label, m.tier);
+    assert.deepEqual(
+      {
+        label: rebuilt.label,
+        tier: rebuilt.tier,
+        method: rebuilt.method,
+        confidence: rebuilt.confidence,
+      },
+      { label: m.label, tier: m.tier, method: m.method, confidence: m.confidence },
+      `round trip for ${c.ns.join(",")}`,
+    );
+    // The provider id survives for every nameserver match; a Domain
+    // Connect-only id was never stored and honestly reads "unknown".
+    assert.equal(rebuilt.provider, m.confidence === "high" ? m.provider : "unknown");
+  }
 });

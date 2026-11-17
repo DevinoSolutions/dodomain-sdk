@@ -15,7 +15,9 @@ import {
   parseTagValueList,
   SPF_MAX_DNS_LOOKUPS,
   spfDnsLookupTermCount,
+  spfmIndirectionHost,
   spfRecordSatisfies,
+  spfRecordSatisfiesThrough,
   spfSoleIncludeHost,
 } from "../src/email-records.ts";
 import { recordValueMatches } from "../src/record-capabilities.ts";
@@ -300,4 +302,61 @@ test("emailPolicyTxtMatches returns null for a non-policy TXT, so tokens stay ex
     recordValueMatches("TXT", "dodomain-verify=AbC", "v=spf1 include:dodomain-verify=AbC ~all"),
     false,
   );
+});
+
+// ── SPFM indirection (GoDaddy, live 2026-11-04 on dodomain.site) ───────────
+
+const GODADDY_APEX_SPF = "v=spf1 include:dc-771c848bd5._spfm.dodomain.site ~all";
+const GODADDY_SPFM_RECORD = "v=spf1 include:amazonses.com ~all";
+const WANT_SES = "v=spf1 include:amazonses.com ~all";
+
+test("GoDaddy's SPFM shape: the apex record alone fails, the one _spfm hop satisfies it", () => {
+  assert.equal(spfRecordSatisfies(WANT_SES, GODADDY_APEX_SPF), false);
+  assert.equal(
+    spfmIndirectionHost(GODADDY_APEX_SPF, "dodomain.site"),
+    "dc-771c848bd5._spfm.dodomain.site",
+  );
+  assert.equal(spfRecordSatisfiesThrough(WANT_SES, GODADDY_APEX_SPF, GODADDY_SPFM_RECORD), true);
+  // Zone casing and a trailing dot do not matter.
+  assert.equal(
+    spfmIndirectionHost(GODADDY_APEX_SPF, "DoDomain.Site."),
+    "dc-771c848bd5._spfm.dodomain.site",
+  );
+});
+
+test("spfmIndirectionHost never follows another zone's include or a non-_spfm include", () => {
+  assert.equal(
+    spfmIndirectionHost("v=spf1 include:dc-1._spfm.other.example ~all", "dodomain.site"),
+    null,
+  );
+  // A suffix match on the label string is not a subdomain.
+  assert.equal(
+    spfmIndirectionHost("v=spf1 include:dc-1._spfm.evildodomain.site ~all", "dodomain.site"),
+    null,
+  );
+  assert.equal(
+    spfmIndirectionHost("v=spf1 include:_spf.dodomain.site ~all", "dodomain.site"),
+    null,
+  );
+  assert.equal(
+    spfmIndirectionHost("v=spf1 include:_spfm.dodomain.site.evil ~all", "dodomain.site"),
+    null,
+  );
+  // Two candidate hops: follow neither.
+  assert.equal(
+    spfmIndirectionHost(
+      "v=spf1 include:a._spfm.dodomain.site include:b._spfm.dodomain.site ~all",
+      "dodomain.site",
+    ),
+    null,
+  );
+  assert.equal(spfmIndirectionHost("not spf", "dodomain.site"), null);
+});
+
+test("spfRecordSatisfiesThrough is still false when the included record lacks the term", () => {
+  assert.equal(
+    spfRecordSatisfiesThrough(WANT_SES, GODADDY_APEX_SPF, "v=spf1 include:_spf.google.com ~all"),
+    false,
+  );
+  assert.equal(spfRecordSatisfiesThrough(WANT_SES, GODADDY_APEX_SPF, "dodomain-verify=x"), false);
 });

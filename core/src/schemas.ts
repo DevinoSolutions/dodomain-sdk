@@ -12,12 +12,13 @@ import { z } from "./zod-runtime.ts";
 
 import { BRAND_COLOR_PATTERN, CONNECT_COPY_MAX_LENGTH, CONNECT_FONT_PRESETS } from "./branding.ts";
 import type { DnsLookupResult, ResolverView } from "./dns-lookup.ts";
+import type { CnameChainResult, VerifyDiagnoserResult, DnsDiffResult } from "./dns-tools.ts";
 import {
   DOMAIN_CONNECT_TEMPLATES,
   type DomainConnectServiceId,
 } from "./domain-connect-templates.ts";
 import type { ProviderGuide } from "./guides.ts";
-import { RECORD_TYPES } from "./record-capabilities.ts";
+import { LOOKUP_RECORD_TYPES, RECORD_TYPES } from "./record-capabilities.ts";
 import type { CompiledRecipe } from "./recipes.ts";
 import {
   SPF_ISSUE_CODES,
@@ -31,9 +32,10 @@ import type { ComposedRecord, RecordHostWarning } from "./records.ts";
 import {
   DODOMAIN_TEAM_HEADER,
   TEAM_GRANT_SELECTION_FIELD,
+  TIER_SCOPES_FIELD,
   type TeamGrantSelection,
 } from "./team-grant.ts";
-import { zRecord, zRecords } from "./records.ts";
+import { MAX_SESSION_RECORDS, zRecord, zRecords } from "./records.ts";
 import {
   CA_ISSUER_DOMAIN_PATTERN,
   normalizeCaIssuerDomain,
@@ -85,7 +87,10 @@ export const zCreateSessionInput = z.object({
   domain: zDomainName,
   /** Accepted and stored for wire-compat; consumed by nothing (see above). */
   recipe: z.string().optional(),
-  records: zRecords,
+  /** Bounded at MAX_SESSION_RECORDS (records.ts holds the number and why). */
+  records: zRecords.max(MAX_SESSION_RECORDS, {
+    message: `A session carries at most ${MAX_SESSION_RECORDS} records.`,
+  }),
   /**
    * Where the hosted flow offers to send the user back. Rendered as an <a
    * href> on the connect page (connect-flow.tsx) and echoed by the public
@@ -167,6 +172,92 @@ export const zCreateSessionResponse = z.object({
 });
 
 export type CreateSessionResponse = z.infer<typeof zCreateSessionResponse>;
+
+// ── Keyless start (T-18036) ─────────────────────────────────────────────────
+// `POST /api/v1/keyless/sessions` creates a connect session with NO account and
+// NO API key (or with the `dd_ks_` key the first call returned). The body is
+// the normal create body without `appId` (a keyless key IS its app), and the
+// response is the normal create response plus a `keyless` block, so an
+// integrator that later switches to a `dd_sk_` key keeps the same parsing.
+
+/** Body of `POST /api/v1/keyless/sessions`: the create body minus `appId`. */
+/** Bounds of the optional keyless `appName` (T-18036 review, issue 5). */
+const KEYLESS_APP_NAME_MAX = 60;
+
+export const zCreateKeylessSessionInput = zCreateSessionInput.omit({ appId: true }).extend({
+  /** The name the end user sees on the hosted connect page ("Connect your
+   * domain to <appName>"). Used only by the call that STARTS the keyless app
+   * (no Authorization); a call with a keyless key reuses the app as it is and
+   * ignores it. Absent: the app is named "Test app". Trimmed, 1 to
+   * KEYLESS_APP_NAME_MAX characters. */
+  appName: z
+    .string()
+    .trim()
+    .min(1, { message: "appName cannot be empty." })
+    .max(KEYLESS_APP_NAME_MAX, {
+      message: `appName is too long (${KEYLESS_APP_NAME_MAX} characters max).`,
+    })
+    .optional(),
+});
+
+export type CreateKeylessSessionInput = z.infer<typeof zCreateKeylessSessionInput>;
+
+/** The request header an ANONYMOUS keyless start carries its proof of work in
+ * (T-18329): `<challenge>:<nonce>`, the challenge from a `428
+ * KEYLESS_PROOF_REQUIRED` answer and a decimal nonce of at most
+ * KEYLESS_PROOF_MAX_NONCE_DIGITS digits. One home for the server
+ * (apps/web/src/lib/keyless-proof.ts) and the published spec. */
+export const KEYLESS_PROOF_HEADER = "DoDomain-Keyless-Proof";
+export const KEYLESS_PROOF_MAX_NONCE_DIGITS = 32;
+
+/** Where a keyless app stands against its lifetime allowance. `open` counts
+ * unfinished sessions that may still become connections. */
+export const zKeylessAllowance = z.object({
+  limit: z.number().int().nonnegative(),
+  used: z.number().int().nonnegative(),
+  open: z.number().int().nonnegative(),
+  remaining: z.number().int().nonnegative(),
+});
+
+export type KeylessAllowance = z.infer<typeof zKeylessAllowance>;
+
+const zKeylessBlock = z.object({
+  /** The `dd_ks_` key, present ONLY on the response that started the keyless
+   * app (only its hash is stored). Send it as `Authorization: Bearer` on later
+   * calls to reuse the same app. */
+  key: z.string().min(1).optional(),
+  appId: z.string().min(1),
+  allowance: zKeylessAllowance,
+  /** Open it signed in to adopt this app into an account (its connections
+   * come with it). The key rides in the URL fragment, never sent to a server. */
+  claimUrl: z.string().min(1),
+  /** One sentence on what claiming unlocks. */
+  unlock: z.string().min(1),
+  docs: z.string().min(1),
+});
+
+/** Response of `POST /api/v1/keyless/sessions`. */
+export const zKeylessSessionResponse = zCreateSessionResponse.extend({
+  /** Always `live` today: a keyless session checks real DNS. */
+  mode: z.literal("live"),
+  keyless: zKeylessBlock,
+});
+
+export type KeylessSessionResponse = z.infer<typeof zKeylessSessionResponse>;
+
+/** Response of `GET /api/v1/keyless`: the allowance and claim state of the
+ * keyless app the bearer `dd_ks_` key belongs to. */
+export const zKeylessStatusResponse = z.object({
+  appId: z.string().min(1),
+  allowance: zKeylessAllowance,
+  claimUrl: z.string().min(1),
+  unlock: z.string().min(1),
+  docs: z.string().min(1),
+  createdAt: z.iso.datetime(),
+  lastUsedAt: z.iso.datetime().nullable(),
+});
+
+export type KeylessStatusResponse = z.infer<typeof zKeylessStatusResponse>;
 
 // ── TLS-issuance advisories ─────────────────────────────────────────────────
 // The wire shape of one advisory from tls-issuance-advisories.ts (CAA + stale
@@ -642,14 +733,17 @@ export const zCheckDomainResponse = z.object({
   guide: zProviderGuide,
   /**
    * true ⇒ this domain's DNS provider offers DoDomain's one-click for at least
-   * one typical setup: tier 1 (Cloudflare OAuth), or tier 2 where the provider
+   * one typical setup: tier 1 (Cloudflare OAuth); tier 2 where the provider
    * serves at least one of DoDomain's Domain Connect templates (probed live,
-   * the same probe the public provider detector runs). `tier: 2` alone only
-   * means the provider SPEAKS Domain Connect — GoDaddy does, and serves none of
-   * the templates, so it answers `false`. Fails closed: a probe that could not
-   * finish is `false`. Provider-level only: a session also needs a plan with
-   * one-click (Pro/Scale). Verdict: core one-click.ts `oneClickAvailableFor`.
-   * Added 2026-10-14, additive — every published SDK ignores unknown fields.
+   * the same probe the public provider detector runs); or a provider whose own
+   * one-click API integration is enabled (Porkbun today, reported at tier 3).
+   * `tier: 2` alone only means the provider SPEAKS Domain Connect: a provider
+   * that serves none of the templates (IONOS today) answers `false`. Fails
+   * closed: a probe that could not finish is `false`. Provider-level only: a
+   * session also needs a plan with one-click (Pro/Scale), and its records must
+   * fit what that path can write. Verdict: core one-click.ts
+   * `oneClickAvailableFor`. Added 2026-10-14, additive — every published SDK
+   * ignores unknown fields.
    */
   oneClickAvailable: z.boolean(),
 });
@@ -702,6 +796,20 @@ export const zDomainPreflightResponse = zCheckDomainResponse
     // One outcome per registry template — zod 4's enum-keyed record is
     // exhaustive, so a template missing from a response fails validation.
     templates: z.record(zDomainConnectServiceId, zTemplateProbeOutcome),
+    /**
+     * true ⇒ the detected provider's OWN one-click integration (DoDomain
+     * writing the records through that provider's API: Porkbun DNS Connect
+     * today, Hostinger once configured) serves this domain in THIS deployment.
+     * Detection still reports such a provider at tier 3, because the
+     * integration is a deployment setting rather than a fact about the zone;
+     * this field is what lets both preflight surfaces say one-click anyway, the
+     * same input POST /api/v1/domains/check's `oneClickAvailable` reads.
+     * Decided only by apps/web lib/own-api-one-click.ts `ownApiOneClickFor`
+     * (check-own-api-one-click-bans.sh). Provider-level only: record-level
+     * limits stay with the session. Defaults to false so the landing page can
+     * still parse a web deployment that predates the field (T-13498).
+     */
+    ownApiOneClick: z.boolean().default(false),
   });
 
 export type DomainPreflightResponse = z.infer<typeof zDomainPreflightResponse>;
@@ -713,9 +821,18 @@ export type DomainPreflightResponse = z.infer<typeof zDomainPreflightResponse>;
 // pinned with `satisfies` so the wire cannot drift from the engine.
 
 /** `?name=&type=` for the DNS lookup. */
+const zDnsToolName = z
+  .string()
+  .trim()
+  .min(1)
+  .max(253)
+  .regex(/^(?!-)[a-z0-9_-]{1,63}(?<!-)(\.(?!-)[a-z0-9_-]{1,63}(?<!-))+\.?$/i, {
+    message: "Enter a fully qualified DNS name without a scheme, path, or port.",
+  });
+
 export const zPublicDnsLookupInput = z.object({
-  name: z.string().trim().min(1).max(253),
-  type: z.enum(RECORD_TYPES),
+  name: zDnsToolName,
+  type: z.enum(LOOKUP_RECORD_TYPES),
 });
 
 const zResolverView = z.object({
@@ -723,12 +840,15 @@ const zResolverView = z.object({
   address: z.string().nullable(),
   outcome: z.enum(["answers", "absent", "error"]),
   answers: z.array(z.string()),
+  records: z
+    .array(z.object({ value: z.string(), ttl: z.number().int().nonnegative().nullable() }))
+    .optional(),
   error: z.string().optional(),
 }) satisfies z.ZodType<ResolverView>;
 
 export const zPublicDnsLookupResponse = z.object({
   fqdn: z.string(),
-  type: z.enum(RECORD_TYPES),
+  type: z.enum(LOOKUP_RECORD_TYPES),
   zone: z.string(),
   authoritative: zResolverView,
   public: z.array(zResolverView),
@@ -737,6 +857,83 @@ export const zPublicDnsLookupResponse = z.object({
 }) satisfies z.ZodType<DnsLookupResult>;
 
 export type PublicDnsLookupResponse = z.infer<typeof zPublicDnsLookupResponse>;
+
+export const zPublicCnameChainInput = z.object({ name: zDnsToolName });
+export const zPublicCnameChainResponse = z.object({
+  name: z.string(),
+  chain: z.array(z.object({ name: z.string(), target: z.string(), apex: z.boolean() })),
+  terminalName: z.string(),
+  outcome: z.enum(["complete", "loop", "depth_limit", "error"]),
+  maxDepth: z.number().int().positive(),
+  apexCname: z.boolean(),
+  flattening: z.enum(["suspected", "not_observed", "unknown"]),
+  addresses: z.array(z.string()),
+  proxyProvider: z.string().nullable(),
+  error: z.string().optional(),
+}) satisfies z.ZodType<CnameChainResult>;
+export type PublicCnameChainResponse = z.infer<typeof zPublicCnameChainResponse>;
+
+export const zPublicVerifyDiagnoserInput = z.object({
+  name: zDnsToolName,
+  target: z.string().min(1).max(2048),
+  type: z.enum(RECORD_TYPES).default("CNAME"),
+});
+export const zPublicVerifyDiagnoserResponse = z.object({
+  name: z.string(),
+  target: z.string(),
+  type: z.enum(RECORD_TYPES),
+  zone: z.string(),
+  provider: z.object({ id: z.string(), label: z.string(), fixUrl: z.string() }),
+  reason: z.enum([
+    "verified",
+    "propagation",
+    "wrong_host",
+    "trailing_dot",
+    "proxied",
+    "apex",
+    "wrong_target",
+    "absent",
+    "indeterminate",
+  ]),
+  message: z.string(),
+  fixUrl: z.string(),
+  lookup: zPublicDnsLookupResponse,
+  wrongHost: z.string().nullable(),
+  proxyProvider: z.string().nullable(),
+}) satisfies z.ZodType<VerifyDiagnoserResult>;
+export type PublicVerifyDiagnoserResponse = z.infer<typeof zPublicVerifyDiagnoserResponse>;
+
+const zDnsExpectedRecord = z.object({
+  name: zDnsToolName,
+  type: z.enum(LOOKUP_RECORD_TYPES),
+  value: z.string().min(1).max(2048),
+  ttl: z.number().int().nonnegative().max(2147483647).optional(),
+});
+/** Shared input/query cap: both the boundary and the engine enforce it. */
+export const PUBLIC_DNS_DIFF_MAX_RECORDS = 25;
+export const zPublicDnsDiffInput = z.object({
+  expected: z.array(zDnsExpectedRecord).min(1).max(PUBLIC_DNS_DIFF_MAX_RECORDS),
+});
+const zDnsSnapshotRecord = zDnsExpectedRecord.extend({
+  ttl: z.number().int().nonnegative().nullable(),
+});
+export const zPublicDnsDiffResponse = z.object({
+  expected: z.array(zDnsExpectedRecord),
+  snapshots: z.array(zPublicDnsLookupResponse),
+  changes: z.array(
+    z.object({
+      name: z.string(),
+      type: z.enum(LOOKUP_RECORD_TYPES),
+      kind: z.enum(["added", "removed", "changed", "ttl_only"]),
+      expected: zDnsSnapshotRecord.nullable(),
+      actual: zDnsSnapshotRecord.nullable(),
+    }),
+  ),
+  unchanged: z.number().int().nonnegative(),
+  ttlUnavailable: z.number().int().nonnegative(),
+  complete: z.boolean(),
+}) satisfies z.ZodType<DnsDiffResult>;
+export type PublicDnsDiffResponse = z.infer<typeof zPublicDnsDiffResponse>;
 
 const zSpfQualifier = z.enum(["+", "-", "~", "?"]);
 
@@ -786,7 +983,7 @@ export type ReverifyConnectionResponse = z.infer<typeof zReverifyConnectionRespo
 // ── /api/v1 error envelope ──────────────────────────────────────────────────
 // The ONE error-body shape apps/web's jsonError (apps/web/src/lib/api/errors.ts)
 // produces for every /api/v1 failure: `{ error: <code>, message?, details? }`.
-// `error` stays a plain string here (NOT a re-typed enum): the finite 10-code
+// `error` stays a plain string here (NOT a re-typed enum): the finite 11-code
 // vocabulary is OWNED by apps/web's ApiErrorCode, and core cannot import from
 // the app — re-declaring the union here would be exactly the producer/consumer
 // drift this file exists to prevent. Consumer today: @dodomain/ai-tools' REST
@@ -796,6 +993,14 @@ export const zApiErrorBody = z.object({
   error: z.string(),
   message: z.string().optional(),
   details: z.unknown().optional(),
+  // The denial envelope (MCP Parity Contract §3.4), additive to the published
+  // {error, message, details}: `code` is the machine vocabulary an agent branches on,
+  // `next` the MCP tool to call to recover, `docs` a reference link.
+  code: z.string().optional(),
+  next: z
+    .object({ tool: z.string(), args: z.record(z.string(), z.unknown()).optional() })
+    .optional(),
+  docs: z.string().optional(),
 });
 
 export type ApiErrorBody = z.infer<typeof zApiErrorBody>;
@@ -857,7 +1062,7 @@ function zConnectCopy(label: string, max: number) {
   return z
     .string()
     .trim()
-    .min(1, { message: `${label} can't be blank — clear it instead.` })
+    .min(1, { message: `${label} can't be blank. Clear it instead.` })
     .max(max, { message: `${label} is too long (${max} characters max).` })
     .refine((value) => !/\p{Cc}/u.test(value), {
       message: `${label} must be a single line of text.`,
@@ -937,17 +1142,9 @@ export type AppTlsIssuerCaInput = z.infer<typeof zAppTlsIssuerCaInput>;
 // schema.prisma) — consumed by the dashboard's updateAppAllowedOrigins server
 // action.
 //
-// TODO(scope): NOTHING READS App.allowedOrigins YET. The column has been
-// written `[]` at app creation since it was added and has no reader anywhere in
-// the product — the embedded widget's postMessage targetOrigin comes from the
-// `origin` query param the widget puts on the iframe URL itself
-// (packages/core/src/message-types.ts ORIGIN_PARAM), NOT from this list, and no
-// route consults it. So this schema defines the STORED shape only; the
-// enforcement hop that turns the list into an actual restriction is a separate
-// change (it belongs at the hosted flow's embed boundary, which is out of this
-// PR's scope — /connect/[token] is off limits here). Until then the editor's
-// copy must not imply a restriction that isn't running, and this comment is the
-// marker that says so.
+// Connect middleware enforces non-empty lists through CSP frame-ancestors;
+// an empty list preserves unrestricted embedding. The widget's postMessage
+// targetOrigin still comes from its iframe URL, independently of this policy.
 //
 // An ORIGIN is scheme + host + optional port — RFC 6454's serialization, which
 // is exactly what a browser puts in the `Origin` header and what
@@ -986,10 +1183,8 @@ function isAcceptableHostname(hostname: string): boolean {
  * moment it is filled in; loopback is not reachable by a third party, so it
  * carries none of the risk plain http carries on a public host.
  *
- * Wildcards (`https://*.example.com`) are deliberately NOT accepted. Wildcard
- * semantics are a matching rule, and no matcher exists yet (see the
- * unenforced-column note above) — accepting the syntax now would store a
- * pattern whose meaning the product has not defined.
+ * Wildcards (`https://*.example.com`) are deliberately NOT accepted. This list
+ * names individual origins, not patterns spanning an integrator's subdomains.
  */
 export function normalizeAllowedOrigin(value: string): string | null {
   const trimmed = value.trim();
@@ -1019,7 +1214,7 @@ export const zAllowedOrigin = z.string().transform((value, ctx) => {
   if (normalized === null) {
     ctx.addIssue({
       code: "custom",
-      message: `“${value.trim()}” is not an origin. Use scheme + host, like https://app.example.com — no path, and https unless it's localhost.`,
+      message: `“${value.trim()}” is not an origin. Use scheme + host, like https://app.example.com (no path, and https unless it's localhost).`,
     });
     return z.NEVER;
   }
@@ -1079,17 +1274,27 @@ export const zListAppsResponse = z.object({
 
 export type ListAppsResponse = z.infer<typeof zListAppsResponse>;
 
+// App creation exposes exactly the public list item, never a secret or hash.
+export const zCreateAppInput = z.object({ name: zAppName });
+export const zCreateAppResponse = zListAppsResponse.shape.apps.element;
+export type CreateAppResponse = z.infer<typeof zCreateAppResponse>;
+
 // ── Which team an OAuth caller acts on (multi-team grants, 2026-09-27) ──────
 // One OAuth approval can cover several of the approving user's teams, or all of
 // them (apps/web/src/lib/oauth-team-grant.ts writes it; the kernel,
-// apps/web/src/lib/api/auth.ts, resolves the team per call). These are the wire
+// apps/web/src/lib/api/principal.ts, resolves the team per call). These are the wire
 // pieces the producer (the consent card, the MCP tools) and the consumer (the
 // consent route, the kernel) share. The header name, the body field name and
 // the selection's type live in the zod-free ./team-grant.ts (the consent card
 // imports them without zod) and are re-exported here unchanged. A `dd_sk_`
 // secret key is bound to one team, and a header naming any other team is
 // refused exactly like an unknown one.
-export { DODOMAIN_TEAM_HEADER, TEAM_GRANT_SELECTION_FIELD, type TeamGrantSelection };
+export {
+  DODOMAIN_TEAM_HEADER,
+  TEAM_GRANT_SELECTION_FIELD,
+  TIER_SCOPES_FIELD,
+  type TeamGrantSelection,
+};
 
 /**
  * The validator for a TeamGrantSelection. `maxTeams` is the app's per-user
@@ -1317,6 +1522,55 @@ export const zSharedSetupLinkResponse = z.object({
 });
 
 export type SharedSetupLinkResponse = z.infer<typeof zSharedSetupLinkResponse>;
+
+// ── /api/v1/sessions/:token/spaceship/apply ─────────────────────────────────
+// The Spaceship API-key connect (dark until SPACESHIP_KEY_CONNECT_ENABLED). The
+// end user pastes a Spaceship API key + secret on the hosted connect page; the
+// route uses them for that one request and keeps neither (packages/core
+// spaceship.ts, scripts/check-spaceship-bans.sh).
+//
+// The charset is what can travel as an HTTP header value with no escaping and
+// nothing a paste could smuggle (whitespace, control characters, quotes). The
+// docs' own sample key is 20 alphanumerics and the sample secret 60 base64url
+// characters; the bounds leave room on both sides. Whitespace around a paste is
+// trimmed before the check.
+//
+// A plain object, not strictObject: the published spec never forbids additive
+// fields (packages/openapi document.test.ts), and an unknown key is stripped,
+// so only apiKey and apiSecret ever reach the route.
+const SPACESHIP_CREDENTIAL = /^[A-Za-z0-9._~+/=-]+$/;
+export const zSpaceshipApplyInput = z.object({
+  apiKey: z.string().trim().min(8).max(256).regex(SPACESHIP_CREDENTIAL),
+  apiSecret: z.string().trim().min(16).max(512).regex(SPACESHIP_CREDENTIAL),
+});
+
+/**
+ * Every outcome the apply route answers 200 with. The route's own gates (dark,
+ * rate limit, unknown/expired session, plan) answer the house error shape
+ * instead. `connected` / `pending`: records are in the zone (now or already)
+ * and verification ran. `records`: these records cannot go through Spaceship's
+ * API. `key_refused` / `scope_missing` / `not_in_account` / `rate_limited` /
+ * `retry`: nothing was written, and pasting again (a corrected key, another
+ * account's key, or the same key a little later) can succeed. `unreadable` /
+ * `conflict` / `error`: the session is failed for this path (the integrator
+ * gets `connection.failed`) and guided setup is the way forward.
+ */
+export const SPACESHIP_APPLY_OUTCOMES = [
+  "connected",
+  "pending",
+  "records",
+  "key_refused",
+  "scope_missing",
+  "not_in_account",
+  "rate_limited",
+  "retry",
+  "unreadable",
+  "conflict",
+  "error",
+] as const;
+export type SpaceshipApplyOutcomeCode = (typeof SPACESHIP_APPLY_OUTCOMES)[number];
+export const zSpaceshipApplyResponse = z.object({ outcome: z.enum(SPACESHIP_APPLY_OUTCOMES) });
+export type SpaceshipApplyResponse = z.infer<typeof zSpaceshipApplyResponse>;
 
 // ── /api/v1/webhook-endpoints ───────────────────────────────────────────────
 // The REST lifecycle for an app's webhook endpoints (2026-08-17): the same set

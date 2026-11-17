@@ -7,6 +7,8 @@ import {
   sanitizeProviderHost,
   discover,
   isTemplateSupported,
+  isTemplateServedBy,
+  dnsProviderRefusesTemplate,
   DiscoveryError,
   type DiscoveryDeps,
 } from "../src/discovery.ts";
@@ -114,6 +116,42 @@ test("isTemplateSupported maps 200->true, 404->false", async () => {
   });
   assert.equal(yes, true);
   assert.equal(no, false);
+});
+
+test("GoDaddy refused dns-records in writing: never served there, whatever its endpoint says", async () => {
+  // VJ (GoDaddy, Senior PM DNS) 2026-11-04: five purpose-specific templates
+  // onboarded, the catch-all `dns-records` refused.
+  assert.equal(dnsProviderRefusesTemplate("godaddy.com", "dns-records"), true);
+  assert.equal(dnsProviderRefusesTemplate(" GoDaddy.com ", "dns-records"), true);
+  for (const serviceId of [
+    "custom-subdomain-cname",
+    "domain-verification",
+    "custom-subdomain-cname-with-verification",
+    "apex-a-with-verification",
+    "email-authentication",
+  ]) {
+    assert.equal(dnsProviderRefusesTemplate("godaddy.com", serviceId), false, serviceId);
+  }
+  // Other providers keep asking their own endpoint.
+  assert.equal(dnsProviderRefusesTemplate("cloudflare.com", "dns-records"), false);
+
+  const fetched: string[] = [];
+  const answers200: DiscoveryDeps = {
+    fetchJson: async (url) => {
+      fetched.push(url);
+      return { ok: true, status: 200, json: null };
+    },
+  };
+  const godaddy = { providerId: "godaddy.com", urlAPI: "https://domainconnect.api.godaddy.com" };
+  assert.equal(await isTemplateServedBy(godaddy, "dodomain.io", "dns-records", answers200), false);
+  assert.deepEqual(fetched, [], "a refused template is never even probed");
+  assert.equal(
+    await isTemplateServedBy(godaddy, "dodomain.io", "custom-subdomain-cname", answers200),
+    true,
+  );
+  assert.deepEqual(fetched, [
+    "https://domainconnect.api.godaddy.com/v2/domainTemplates/providers/dodomain.io/services/custom-subdomain-cname",
+  ]);
 });
 
 // ── discovery on the zone that OWNS the records ─────────────────────────────

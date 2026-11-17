@@ -151,7 +151,7 @@ export async function analyzeSpf(domain: string, deps: SpfDeps = {}): Promise<Sp
       severity: "info",
       domain: name,
       term: null,
-      note: `The TXT lookup for ${name} did not complete (${read.code}) — nothing below is a verdict.`,
+      note: `The TXT lookup for ${name} did not complete (${read.code}). Nothing below is a verdict.`,
     });
     return {
       domain: name,
@@ -190,7 +190,7 @@ export async function analyzeSpf(domain: string, deps: SpfDeps = {}): Promise<Sp
       severity: "error",
       domain: name,
       term: null,
-      note: `${name} publishes ${records.length} v=spf1 records. RFC 7208 §3.2 requires exactly one — receivers return permerror and the policy is ignored.`,
+      note: `${name} publishes ${records.length} v=spf1 records. RFC 7208 §3.2 requires exactly one. Receivers return permerror and the policy is ignored.`,
     });
   }
   const record = records[0]!;
@@ -225,7 +225,7 @@ export async function analyzeSpf(domain: string, deps: SpfDeps = {}): Promise<Sp
           severity: "error",
           domain: zone,
           term: term.raw,
-          note: `"${term.raw}" is not a valid SPF mechanism or modifier — receivers return permerror for the whole record.`,
+          note: `"${term.raw}" is not a valid SPF mechanism or modifier. Receivers return permerror for the whole record.`,
         });
         continue;
       }
@@ -303,7 +303,7 @@ export async function analyzeSpf(domain: string, deps: SpfDeps = {}): Promise<Sp
               severity: "error",
               domain: target,
               term: term.raw,
-              note: `${target} (included from ${zone}) publishes ${nestedRecords.length} v=spf1 records — permerror at receivers.`,
+              note: `${target} (included from ${zone}) publishes ${nestedRecords.length} v=spf1 records, which is a permerror at receivers.`,
             });
           }
           // An include's own `all` never decides the outer record (§5.2) — walked for its lookups only.
@@ -379,7 +379,7 @@ export async function analyzeSpf(domain: string, deps: SpfDeps = {}): Promise<Sp
       severity: "warning",
       domain: name,
       term: "?all",
-      note: `"?all" makes SPF neutral for unlisted senders — no protection, and nothing for DMARC to align on. Prefer "~all" or "-all".`,
+      note: `"?all" makes SPF neutral for unlisted senders. There is no protection, and nothing for DMARC to align on. Prefer "~all" or "-all".`,
     });
   }
 

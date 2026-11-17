@@ -33,6 +33,13 @@ export interface ProviderGuide {
    */
   discouragesApexCname?: true;
   /**
+   * The sentence from this guide's own copy saying a CNAME does not belong on
+   * the root domain. Set on every guide with `discouragesApexCname`; drives the
+   * docs FAQ only (the connect flow renders `notes` and `hostFormat`, never
+   * this field).
+   */
+  apexCnameNote?: string;
+  /**
    * True when the provider's panel has no host field at all (records apply to
    * the (sub)domain you select). The docs page then does not headline a
    * "host field" the panel does not have.
@@ -60,7 +67,9 @@ const GUIDES: Record<string, ProviderGuide> = {
       "Add each record below. For CNAME/A on a website, set Proxy status to DNS only if verification stalls.",
       "Save, then come back and click Verify.",
     ],
-    notes: ["Proxied A/CNAME records won't show their real value on public DNS — that's expected."],
+    notes: [
+      "Proxied A/CNAME records won't show their real value on public DNS, which is expected.",
+    ],
     helpArticle: {
       url: "https://developers.cloudflare.com/dns/manage-dns-records/reference/dns-record-types/",
       checkedOn: "2026-09-05",
@@ -71,9 +80,10 @@ const GUIDES: Record<string, ProviderGuide> = {
     label: "GoDaddy",
     dashboardUrl: "https://dcc.godaddy.com/control/%domain%/dns",
     hostFormat:
-      "Enter the subdomain only in Name (e.g. `www`), never the full domain; use `@` for the apex on A/TXT records — GoDaddy refuses `@` as a CNAME Name, so a CNAME always needs a subdomain.",
+      "Enter the subdomain only in Name (e.g. `www`), never the full domain; use `@` for the apex on A/TXT records. GoDaddy refuses `@` as a CNAME Name, so a CNAME always needs a subdomain.",
     apexToken: "@",
     discouragesApexCname: true,
+    apexCnameNote: "GoDaddy refuses `@` as a CNAME Name, so a CNAME always needs a subdomain.",
     steps: [
       "Sign in to GoDaddy → Domain Portfolio → select %domain% → DNS.",
       "Select Add New Record and pick the record type from the Type menu.",
@@ -96,6 +106,8 @@ const GUIDES: Record<string, ProviderGuide> = {
     hostFormat: "Enter the subdomain only in Host; use `@` for the apex.",
     apexToken: "@",
     discouragesApexCname: true,
+    apexCnameNote:
+      "Namecheap warns against a CNAME on the bare domain (`@`) because it overrides the domain's mail records. A CNAME belongs on a subdomain.",
     steps: [
       "Namecheap → Domain List → Manage %domain% → Advanced DNS.",
       "Under Host Records, click Add New Record.",
@@ -103,9 +115,10 @@ const GUIDES: Record<string, ProviderGuide> = {
       "Click Save All Changes, then come back and click Verify.",
     ],
     notes: [
-      "Namecheap splits CNAME 'Value' without a trailing dot — enter the target as shown.",
-      "Namecheap warns against a CNAME on the bare domain (`@`) because it overrides the domain's mail records — a CNAME belongs on a subdomain.",
+      "Namecheap splits CNAME 'Value' without a trailing dot, so enter the target as shown.",
+      "Namecheap warns against a CNAME on the bare domain (`@`) because it overrides the domain's mail records. A CNAME belongs on a subdomain.",
       "Namecheap says new host records take up to 30 minutes to be accepted.",
+      "Namecheap does not offer one-click DNS setup for third-party apps: its API needs a personal key, a whitelisted server IP and an eligible account, and saving host records replaces the whole set, so DoDomain shows these steps instead.",
     ],
     helpArticle: {
       url: "https://www.namecheap.com/support/knowledgebase/article.aspx/9646/2237/how-to-create-a-cname-record-for-your-domain/",
@@ -125,8 +138,8 @@ const GUIDES: Record<string, ProviderGuide> = {
       "Confirm with your password or 2FA code when asked, then come back and click Verify.",
     ],
     notes: [
-      "Squarespace has no DNS API — manual entry is the only path here.",
-      "Google Domains customers: every Google Domains registration moved to Squarespace (migration complete 10 July 2024), so this is your DNS panel too — even while the nameservers still say googledomains.com.",
+      "Squarespace has no DNS API, so manual entry is the only path here.",
+      "Google Domains customers: every Google Domains registration moved to Squarespace (migration complete 10 July 2024), so this is your DNS panel too, even while the nameservers still say googledomains.com.",
       "Custom records default to a 4-hour TTL; Squarespace says changes can take 24–48 hours to update.",
     ],
     helpArticle: {
@@ -194,7 +207,7 @@ const GUIDES: Record<string, ProviderGuide> = {
     label: "DreamHost",
     dashboardUrl: "https://panel.dreamhost.com/index.cgi?tree=domain.dashboard",
     hostFormat:
-      "Enter the subdomain only in Name — leave it blank for the apex (`@` is added automatically).",
+      "Enter the subdomain only in Name, and leave it blank for the apex (`@` is added automatically).",
     apexToken: "(blank)",
     steps: [
       "DreamHost panel → Manage Websites → three-dot menu on %domain% → DNS Settings.",
@@ -321,7 +334,7 @@ const GUIDES: Record<string, ProviderGuide> = {
       "Click Add, then come back and click Verify.",
     ],
     notes: [
-      '"A CNAME or ALIAS record with that host already exists" means Porkbun\'s default ALIAS/CNAME entries are in the way — delete the one at that host first.',
+      '"A CNAME or ALIAS record with that host already exists" means Porkbun\'s default ALIAS/CNAME entries are in the way. Delete the one at that host first.',
     ],
     helpArticle: {
       url: "https://kb.porkbun.com/article/68-how-to-edit-dns-records",
@@ -338,18 +351,93 @@ const GUIDES: Record<string, ProviderGuide> = {
       "Enter the subdomain only in Hostname; use `@` for the root domain (if a form asks for your full domain as the hostname, type `@` instead).",
     apexToken: "@",
     discouragesApexCname: true,
+    apexCnameNote:
+      "Hover cannot host a CNAME on the root domain (`@`). A CNAME must sit on a subdomain.",
     steps: [
       "Sign in to Hover → Domains → %domain% → the DNS tab.",
       "Click Add a record and pick the record type.",
       "Enter Hostname and the value field as below (Target Name for a CNAME, Content for TXT, IP address for A).",
       "Save the record, then come back and click Verify.",
     ],
-    notes: [
-      "Hover cannot host a CNAME on the root domain (`@`) — a CNAME must sit on a subdomain.",
-    ],
+    notes: ["Hover cannot host a CNAME on the root domain (`@`). A CNAME must sit on a subdomain."],
     helpArticle: {
       url: "https://support.hover.com/support/solutions/articles/201000064728",
       checkedOn: "2026-09-05",
+    },
+  },
+  // —— T-6545 batch (2026-10-22). Domain Chief, Glauca and Simply.com are found
+  // by Domain Connect discovery (their providerIds map here through
+  // GUIDE_BY_DOMAIN_CONNECT_ID below); Google Cloud DNS by its nameservers.
+  // Vocabulary read from the source in `helpArticle` on that date.
+  domainchief: {
+    provider: "domainchief",
+    label: "Domain Chief",
+    dashboardUrl: "https://domain.chief.app/permalink/domain/%domain%/dns",
+    hostFormat:
+      "Enter the subdomain only in Name (e.g. `www`), never the domain itself; leave it empty for the root domain.",
+    apexToken: "(blank)",
+    steps: [
+      "Sign in to Domain Chief, pick %domain% and open its DNS records.",
+      "Add a record, pick the Type, and enter Name and the value as below.",
+      "Save each record, then come back and click Verify.",
+    ],
+    helpArticle: { url: "https://domain.chief.app/api/docs/v1", checkedOn: "2026-10-23" },
+  },
+  glauca: {
+    provider: "glauca",
+    label: "Glauca HexDNS",
+    dashboardUrl: "https://dns.glauca.digital/",
+    hostFormat:
+      "Enter the subdomain only in Record name (the zone is appended); use `@` for the zone root.",
+    apexToken: "@",
+    steps: [
+      "Sign in to the HexDNS control panel and open the zone for %domain%.",
+      "In the section for the record type (Address records, CNAME records, TXT records), click New.",
+      "Enter Record name and the value field as below (Address for A, Alias for CNAME, Data for TXT), then Save.",
+      "Come back here and click Verify.",
+    ],
+    helpArticle: {
+      url: "https://github.com/AS207960/hexdns/blob/master/hexdns_django/dns_grpc/templates/dns_grpc/fzone/zone.html",
+      checkedOn: "2026-10-22",
+    },
+  },
+  googleclouddns: {
+    provider: "googleclouddns",
+    label: "Google Cloud DNS",
+    dashboardUrl: "https://console.cloud.google.com/net-services/dns/zones",
+    hostFormat:
+      "Enter the subdomain only in DNS name (e.g. `www`); the zone's domain is appended. Leave it blank for the apex. `@` does not create an apex record.",
+    apexToken: "(blank)",
+    steps: [
+      "Google Cloud console → Cloud DNS zones → click the zone for %domain%.",
+      "On the Zone details page, click Add standard.",
+      "Enter DNS name, pick the Resource record type and fill in the value as below.",
+      "Click Create, then come back and click Verify.",
+    ],
+    notes: [
+      "Bought the domain through Google Domains and never set up Cloud DNS? Google Domains registrations moved to Squarespace, so the records live in Squarespace Domains' DNS panel instead.",
+    ],
+    helpArticle: { url: "https://cloud.google.com/dns/docs/records", checkedOn: "2026-10-22" },
+  },
+  simplycom: {
+    provider: "simplycom",
+    label: "Simply.com",
+    dashboardUrl: "https://www.simply.com/en/controlpanel/",
+    hostFormat: "Enter the subdomain only in Name; use `@` for the root domain.",
+    apexToken: "@",
+    steps: [
+      "Sign in to the Simply.com control panel, select %domain% and click DNS.",
+      "Create a new DNS record and pick the record type.",
+      "Fill in Name and Value as below, leaving the other fields as they are.",
+      "Save, then come back and click Verify.",
+    ],
+    notes: [
+      "Simply.com says CNAME records only work on subdomains.",
+      "Changes apply at Simply.com's name servers immediately; Simply.com says they can take a few hours to reach every resolver.",
+    ],
+    helpArticle: {
+      url: "https://www.simply.com/en/support/faq/domain/339-about-dns-records/",
+      checkedOn: "2026-10-23",
     },
   },
   strato: {
@@ -357,12 +445,12 @@ const GUIDES: Record<string, ProviderGuide> = {
     label: "STRATO",
     dashboardUrl: "https://www.strato.de/apps/CustomerService",
     hostFormat:
-      "No host field: records apply to the (sub)domain you select — create the subdomain under Domains first if it doesn't exist yet.",
+      "No host field: records apply to the (sub)domain you select, so create the subdomain under Domains first if it doesn't exist yet.",
     apexToken: "%domain%",
     hasNoHostField: true,
     steps: [
       "STRATO customer login → Domains → Domain management.",
-      "Open the settings (gear) next to %domain% — or the subdomain — and go to DNS.",
+      "Open the settings (gear) next to %domain% (or the subdomain) and go to DNS.",
       "Set each record below on the matching (sub)domain entry.",
       "Save, then come back and click Verify.",
     ],
@@ -394,7 +482,7 @@ const GUIDES: Record<string, ProviderGuide> = {
       "Come back here and click Verify.",
     ],
     notes: [
-      "Domains connected to Wix by pointing are managed at the registrar, not in Wix — these steps apply only to domains on Wix name servers.",
+      "Domains connected to Wix by pointing are managed at the registrar, not in Wix. These steps apply only to domains on Wix name servers.",
     ],
     helpArticle: {
       url: "https://support.wix.com/en/article/adding-or-updating-cname-records-in-your-wix-account",
@@ -416,6 +504,127 @@ const GUIDES: Record<string, ProviderGuide> = {
     notes: [
       "DNS is editable at WordPress.com only while the domain uses WordPress.com name servers.",
     ],
+  },
+  // —— T-5809 batch 1 (2026-10-22): every label, field, TTL and limit below was
+  // read from the provider's own help page named in `helpArticle` on that date;
+  // anything those pages do not state is left out.
+  // TODO(scope): none of these five has a detect.ts NS_MAP row, so the connect flow cannot select them yet (the docs pages are live). A row also moves the "23 DNS providers" detection count and the apex table in apps/docs/content/docs/apex-domains.mdx, and some of their name servers belong to resellers with other panels, so each row needs its own review — T-5809
+  dynadot: {
+    provider: "dynadot",
+    label: "Dynadot",
+    dashboardUrl: "https://www.dynadot.com/account/",
+    hostFormat:
+      "Enter the subdomain prefix only (e.g. `www`) in Subdomain Records; the root domain goes in the Domain Record section, where you never type the `@` symbol itself.",
+    apexToken: "(blank)",
+    steps: [
+      "Sign in to Dynadot → My Domains → Manage Domains.",
+      "Tick %domain%, click Action, and choose DNS Settings.",
+      "Pick Dynadot DNS in the drop-down at the top of the page.",
+      "Add each record below: in Domain Record for the root domain, in Subdomain Records for a prefix such as `www`.",
+      "Click Save Settings, then come back and click Verify.",
+    ],
+    notes: [
+      "These screens apply only while the domain uses Dynadot DNS; with third-party name servers the records go to that provider.",
+      "Dynadot says name server changes can take some time to propagate.",
+    ],
+    helpArticle: {
+      url: "https://www.dynadot.com/help/question/set-up-DNS",
+      checkedOn: "2026-10-22",
+    },
+  },
+  enom: {
+    provider: "enom",
+    label: "Enom",
+    dashboardUrl: "https://access.enom.com",
+    hostFormat: "Enter the subdomain prefix only in Host Name; use `@` for the root domain.",
+    apexToken: "@",
+    steps: [
+      "Sign in to Enom → Domains → My domains and pick %domain%.",
+      "Choose Host records from the Manage domain drop-down.",
+      "Enter the Host Name, pick the Record Type, and enter the Address (target).",
+      "Click Save, then come back and click Verify.",
+    ],
+    notes: [
+      "Host records take effect only while the domain uses Enom's default name servers; on other name servers they belong at that provider.",
+      "Enom gives you 15 host-record rows to start with; more need a verified support request.",
+      "Enom's default TTL is 3600 seconds and resets to 3600 whenever host records change.",
+      "Enom says changes may take up to 8 to 24 hours to propagate.",
+    ],
+    helpArticle: {
+      url: "https://support.enom.com/support/solutions/articles/201000065361-managing-dns-host-records",
+      checkedOn: "2026-10-22",
+    },
+  },
+  infomaniak: {
+    provider: "infomaniak",
+    label: "Infomaniak",
+    dashboardUrl: "https://manager.infomaniak.com",
+    hostFormat:
+      "Enter the subdomain only in Source; leave Source blank for the root domain. The value goes in Target.",
+    apexToken: "(blank)",
+    steps: [
+      "Infomaniak Manager → Domain → click %domain% → DNS Zone in the left menu.",
+      "In the Simple Mode table, click the blue Add entry button, choose the record type, and click Next.",
+      "Fill in Source and Target as below and leave the TTL as it is.",
+      "Come back here and click Verify.",
+    ],
+    notes: ["Infomaniak says any DNS addition or change may take up to 48 hours to propagate."],
+    helpArticle: {
+      url: "https://www.infomaniak.com/en/support/faq/2000/modify-a-dns-zone-simple-mode-for-a-domain-managed-by-infomaniak",
+      checkedOn: "2026-10-22",
+    },
+  },
+  networksolutions: {
+    provider: "networksolutions",
+    label: "Network Solutions",
+    hostFormat:
+      "Pick `@`, `www` or Other Host in Refers to; the target goes in Points to for A, Alias to for a CNAME and TXT Value for a TXT record.",
+    apexToken: "@",
+    // No `discouragesApexCname`: with this label the docs generator's description
+    // ("...why the root can't take a CNAME...") overruns its 160-char ceiling. The
+    // restriction is stated in the first note instead.
+    steps: [
+      "Log in to Network Solutions → Domains → select %domain% and click Manage.",
+      "Open the DNS tab and click +Add Record.",
+      "Pick the record type and complete the fields as below, leaving the TTL as it is.",
+      "Click Add, then come back and click Verify.",
+    ],
+    notes: [
+      "Network Solutions says CNAME records can only be created for third-level domains; a CNAME on the root domain can conflict with other records and disrupt email or website services, and it suggests Web Forwarding for that case.",
+      "The default TTL is 7200 seconds (2 hours) for every record type.",
+      "Network Solutions says Advanced DNS updates may take up to two hours to propagate.",
+      "The classic Advanced DNS view has no option for CAA records.",
+    ],
+    helpArticle: {
+      url: "https://www.networksolutions.com/help/article/manage-dns-adns-records",
+      checkedOn: "2026-10-22",
+    },
+  },
+  transip: {
+    provider: "transip",
+    label: "TransIP",
+    dashboardUrl: "https://www.transip.eu/cp/",
+    hostFormat:
+      "Enter the subdomain only in Name (TransIP adds the domain); use `@` for the root domain. A CNAME target outside the domain goes in Value ending in a dot.",
+    apexToken: "@",
+    // No `discouragesApexCname`: the docs description it adds is 158 chars here, over
+    // the 155 the docs metadata gate allows. The restriction is the first note instead.
+    steps: [
+      "TransIP control panel → Domain → click %domain% in the left column (leave its box unticked).",
+      "Scroll to DNS settings → DNS. If the records are not shown, switch off the TransIP settings toggle.",
+      "Add each record below with its Name, TTL, Type and Value.",
+      "Come back here and click Verify.",
+    ],
+    notes: [
+      "TransIP says a CNAME record can only be used for subdomains, so a CNAME never goes on the root domain (`@`).",
+      "Switching the TransIP settings toggle off is what reveals your own DNS records.",
+      "The trailing dot belongs only in the Value of CNAME, ALIAS, MX and SRV records, never in the Name.",
+      "TransIP recommends a low TTL, for example 1 or 5 minutes, and says changes can take up to 24 hours to take effect globally.",
+    ],
+    helpArticle: {
+      url: "https://www.transip.eu/knowledgebase/407-setting-a-cname-record/",
+      checkedOn: "2026-10-22",
+    },
   },
 };
 
@@ -441,13 +650,68 @@ export function listProviderGuides(): ProviderGuide[] {
   return Object.values(GUIDES).sort((a, b) => a.label.localeCompare(b.label, "en"));
 }
 
+/**
+ * Domain Connect providerId → guide key. A zone detection matches by Domain
+ * Connect discovery alone (no NS row) reports the provider's own providerId
+ * (detect.ts), which is not a guide key — without this, Glauca and Simply.com
+ * users got the generic steps. providerIds as their settings endpoints return
+ * them (live discovery, 2026-10-19 and 2026-10-22).
+ */
+const GUIDE_BY_DOMAIN_CONNECT_ID: Record<string, string> = {
+  "glauca.digital": "glauca",
+  "simply.com": "simplycom",
+  "squarespace.com": "squarespace",
+  "namesilo.com": "namesilo",
+  "godaddy.com": "godaddy",
+  "ionos.com": "ionos",
+  "vercel.com": "vercel",
+  "wordpress.com": "wordpress",
+  "cloudflare.com": "cloudflare",
+};
+
 export function guideFor(provider: string, domain?: string): ProviderGuide {
-  const base = GUIDES[provider] ?? GENERIC;
+  const base = GUIDES[provider] ?? GUIDES[GUIDE_BY_DOMAIN_CONNECT_ID[provider] ?? ""] ?? GENERIC;
   if (!domain) return base;
   const sub = (s?: string) => (s ? s.replace(/%domain%/g, domain) : s);
   return {
     ...base,
     dashboardUrl: sub(base.dashboardUrl),
     steps: base.steps.map((s) => s.replace(/%domain%/g, domain)),
+  };
+}
+
+/**
+ * The fields of a guide that are part of the published `/api/v1` contract
+ * (`zProviderGuide` in schemas.ts, the OpenAPI spec, the SDK's `ProviderGuide`).
+ * An ALLOWLIST on purpose: the docs-only fields on `ProviderGuide`
+ * (`discouragesApexCname`, `apexCnameNote`, `hasNoHostField`, `helpArticle`)
+ * drive the generated docs pages and never reach a wire body, and a field added
+ * to `ProviderGuide` later stays off the wire until it is listed here AND in
+ * `zProviderGuide`. guides.test.ts pins both directions: public keys are a
+ * subset of `zProviderGuide`'s keys, and every `zProviderGuide` key defined on
+ * the full guide is present on the public one.
+ */
+export type PublicProviderGuide = Pick<
+  ProviderGuide,
+  "provider" | "label" | "dashboardUrl" | "hostFormat" | "apexToken" | "steps" | "notes"
+>;
+
+/**
+ * `guideFor` narrowed to the published contract: THE producer for every public
+ * `guide` body (POST /domains/check, session detect, the preflight engine).
+ * Routes must call this, never `guideFor`, so the wire cannot drift from the
+ * contract (`scripts/check-public-guide-bans.sh`). `guideFor` itself stays
+ * the full record for the docs generator and tests.
+ */
+export function publicGuideFor(provider: string, domain?: string): PublicProviderGuide {
+  const g = guideFor(provider, domain);
+  return {
+    provider: g.provider,
+    label: g.label,
+    ...(g.dashboardUrl !== undefined && { dashboardUrl: g.dashboardUrl }),
+    hostFormat: g.hostFormat,
+    apexToken: g.apexToken,
+    steps: g.steps,
+    ...(g.notes !== undefined && { notes: g.notes }),
   };
 }

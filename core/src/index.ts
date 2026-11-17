@@ -21,6 +21,7 @@ export * from "./tls-issuance-advisory-types.ts";
 export * from "./spf.ts";
 export * from "./spf-types.ts";
 export * from "./dns-lookup.ts";
+export * from "./dns-tools.ts";
 // "Is this name answering from a CDN proxy's edge?" — the classifier over the
 // vendored ranges (cdn-proxy-ranges.ts, also "@dodomain/core/cdn-proxy-ranges"
 // for client bundles) and its authoritative A/AAAA observation. Read by the

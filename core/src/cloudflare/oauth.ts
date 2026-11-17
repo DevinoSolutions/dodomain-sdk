@@ -101,7 +101,7 @@ export async function exchangeCode(input: ExchangeInput): Promise<CfTokenRespons
     const detail = errorText === "" ? text.slice(0, 200) : errorText;
     const description = describeField(readField(json, "error_description"));
     throw new CfOAuthError(
-      `token exchange failed (HTTP ${res.status}): ${detail}${description === "" ? "" : " — " + description}`,
+      `token exchange failed (HTTP ${res.status}): ${detail}${description === "" ? "" : ": " + description}`,
     );
   }
   const accessToken = readField(json, "access_token");

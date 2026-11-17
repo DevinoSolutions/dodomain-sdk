@@ -18,6 +18,7 @@ import {
   findRecordId,
   verifyRecordViaApi,
   CfDnsError,
+  CfZoneNotFoundError,
 } from "../src/cloudflare/dns.ts";
 import { CF_TOKEN_URL, type CfConfig } from "../src/cloudflare/config.ts";
 
@@ -156,11 +157,31 @@ test("resolveZoneId: GET /zones?name= with bearer, returns first id", async () =
   assert.equal(opts.headers.authorization, "Bearer tok-1");
 });
 
-test("resolveZoneId: throws when no zone", async () => {
-  const { impl } = fakeFetch(() => ({ json: { success: true, result: [] } }));
+test("resolveZoneId: empty zone lookups reject with CfZoneNotFoundError after walking every candidate", async () => {
+  // Mock Cloudflare account with no visible zones; no live HTTP requests.
+  const mockNoZonesFetch = fakeFetch(() => ({ json: { success: true, result: [] } }));
   await assert.rejects(
-    () => resolveZoneId("tok", "nope.example", impl),
-    (e) => e instanceof CfDnsError,
+    () => resolveZoneId("tok", "sub.nope.example", mockNoZonesFetch.impl),
+    (e) => {
+      assert.ok(e instanceof CfZoneNotFoundError);
+      assert.ok(e instanceof CfDnsError);
+      assert.equal(
+        e.message,
+        `no Cloudflare zone found for "sub.nope.example". The account you approved doesn't have that domain. ` +
+          `Use the root domain (e.g. getuptimely.com), or a domain that lives in the approved Cloudflare account.`,
+      );
+      return true;
+    },
+  );
+  assert.deepEqual(
+    mockNoZonesFetch.calls.map(({ url, opts }) => {
+      const parsed = new URL(url);
+      return [opts.method, parsed.pathname, parsed.searchParams.get("name")];
+    }),
+    [
+      ["GET", "/client/v4/zones", "sub.nope.example"],
+      ["GET", "/client/v4/zones", "nope.example"],
+    ],
   );
 });
 

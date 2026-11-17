@@ -13,7 +13,7 @@
 //     fetch fails;
 //   - it is refreshed by `node scripts/ci/cdn-proxy-ranges-watch.mjs --write`
 //     (rewrites the GENERATED block below from the published lists), and the
-//     nightly `.github/workflows/cdn-proxy-ranges-watch.yml` runs the same
+//     nightly `.github/workflows/nightly-watchers.yml` runs the same
 //     script in check mode, going red and opening an issue the moment a
 //     published list drifts from this snapshot.
 //

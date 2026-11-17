@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { DOMAIN_CONNECT_TEMPLATES } from "../src/domain-connect-templates.ts";
+import { DOMAIN_CONNECT_TEMPLATES, PREPARED_SERVICE_IDS } from "../src/domain-connect-templates.ts";
 import { zProviderWatchSnapshot } from "../src/provider-watch.ts";
 
 const SNAPSHOT_PATH = join(
@@ -41,7 +41,9 @@ test("the committed provider-watch snapshot parses with zProviderWatchSnapshot",
   const snapshot = parsed.data;
   assert.deepEqual(
     [...snapshot.ourTemplates.serviceIds].sort(),
-    DOMAIN_CONNECT_TEMPLATES.map((template) => template.serviceId).sort(),
+    DOMAIN_CONNECT_TEMPLATES.map((template) => template.serviceId)
+      .filter((serviceId) => !PREPARED_SERVICE_IDS.has(serviceId))
+      .sort(),
   );
   for (const provider of snapshot.providers) {
     for (const serviceId of snapshot.ourTemplates.serviceIds) {

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { guideFor } from "../src/guides.ts";
-import { zRecord, zRecords } from "../src/records.ts";
+import { MAX_SESSION_RECORDS, zRecord, zRecords } from "../src/records.ts";
 import {
   WEBHOOK_EVENT_PAYLOAD_SCHEMAS,
   WEBHOOK_EVENT_TYPES,
@@ -16,6 +16,7 @@ import {
   zCreateSessionResponse,
   zDetectSessionResponse,
   zDisconnectConnectionResponse,
+  zDomainPreflightResponse,
   zIntegratorSession,
   zListConnectionsQuery,
   zListConnectionsResponse,
@@ -92,6 +93,38 @@ test("zCreateSessionInput rejects a recipe-only body — a recipe no longer subs
 
 test("zCreateSessionInput rejects a body with no records at all", () => {
   assert.equal(zCreateSessionInput.safeParse({ domain: "x.example.com" }).success, false);
+});
+
+// T-9466: nothing bounded a session's record count, and every record is one
+// DNS lookup per verify/poll/re-check and one provider write per one-click apply.
+test("zCreateSessionInput accepts exactly MAX_SESSION_RECORDS records and refuses one more on the records field", () => {
+  const recordsOf = (count: number) =>
+    Array.from({ length: count }, (_, i) => ({ type: "TXT", host: `r${i}`, value: "v" }));
+  assert.equal(MAX_SESSION_RECORDS, 50);
+  assert.equal(
+    zCreateSessionInput.safeParse({
+      domain: "x.example.com",
+      records: recordsOf(MAX_SESSION_RECORDS),
+    }).success,
+    true,
+  );
+  const over = zCreateSessionInput.safeParse({
+    domain: "x.example.com",
+    records: recordsOf(MAX_SESSION_RECORDS + 1),
+  });
+  assert.equal(over.success, false);
+  const issue = over.error?.issues.find((i) => i.path[0] === "records");
+  assert.equal(issue?.code, "too_big");
+  assert.equal(issue?.path.length, 1);
+});
+
+test("zRecords stays unbounded so a stored session over the creation cap still parses", () => {
+  const stored = Array.from({ length: MAX_SESSION_RECORDS + 1 }, (_, i) => ({
+    type: "TXT",
+    host: `r${i}`,
+    value: "v",
+  }));
+  assert.equal(zRecords.safeParse(stored).success, true);
 });
 
 // The domain used to be optional and was repaired to "" by the route, which
@@ -751,6 +784,38 @@ test("zCheckDomainResponse accepts the route payload for both discovery outcomes
   assert.equal(
     zCheckDomainResponse.safeParse({ ...base, tier: 4, domainConnect: { discovered: false } })
       .success,
+    false,
+  );
+});
+
+test("zDomainPreflightResponse reads a response without ownApiOneClick as no own-API one-click", () => {
+  // T-13498: the landing page parses the web response, and the two deploy at
+  // slightly different moments, so a web build that predates the field must
+  // still parse, and must never read as one-click.
+  const templates: Record<string, unknown> = {};
+  for (const serviceId of zDomainPreflightResponse.shape.templates.keyType.options) {
+    templates[serviceId] = { probed: false, reason: "not_tier_2" };
+  }
+  const base = {
+    domain: "shop.example.com",
+    zone: "example.com",
+    provider: "porkbun",
+    label: "Porkbun",
+    tier: 3,
+    method: "guided",
+    confidence: "high",
+    nameServers: ["curitiba.ns.porkbun.com"],
+    domainConnect: { discovered: false },
+    templates,
+    guide: guideFor("porkbun", "example.com"),
+  };
+  assert.equal(zDomainPreflightResponse.parse(base).ownApiOneClick, false);
+  assert.equal(
+    zDomainPreflightResponse.parse({ ...base, ownApiOneClick: true }).ownApiOneClick,
+    true,
+  );
+  assert.equal(
+    zDomainPreflightResponse.safeParse({ ...base, ownApiOneClick: "yes" }).success,
     false,
   );
 });

@@ -23,6 +23,20 @@ export const RECORD_TYPES = ["A", "AAAA", "CNAME", "TXT", "MX"] as const;
 
 export type RecordType = (typeof RECORD_TYPES)[number];
 
+/** Read-only DNS tools also expose types the resolver already reads for zone
+ * discovery and TLS advisories. This does not widen connect/write support. */
+export const LOOKUP_RECORD_TYPES = [...RECORD_TYPES, "NS", "CAA"] as const;
+export type LookupRecordType = (typeof LOOKUP_RECORD_TYPES)[number];
+
+/** Address lookups are the resolver operations that expose per-record TTL. */
+export type AddressRecordType = Extract<RecordType, "A" | "AAAA">;
+
+/** Canonical equality for complete DNS answer sets, without weakening TXT
+ * token comparisons or lower-casing case-sensitive CAA property values. */
+export function canonicalDnsAnswer(type: LookupRecordType, value: string): string {
+  return type === "TXT" || type === "CAA" ? value : value.replace(/\.$/, "").toLowerCase();
+}
+
 /** True when `type` is one of the accepted DoDomain record types. */
 export function isRecordType(type: string): type is RecordType {
   return (RECORD_TYPES as readonly string[]).includes(type);
@@ -37,6 +51,38 @@ export function isRecordType(type: string): type is RecordType {
  * diverge once F-014 adds tier-2/guided types to the accepted set.
  */
 export const TIER1_WRITABLE_TYPES: readonly RecordType[] = [...RECORD_TYPES];
+
+// Hostinger's zone API supports all five current connect types. Keep this
+// explicit here: widening RECORD_TYPES must not silently widen this adapter.
+const HOSTINGER_WRITABLE_TYPES: readonly RecordType[] = ["A", "AAAA", "CNAME", "TXT", "MX"];
+export function isHostingerWritable(type: string): type is RecordType {
+  return (HOSTINGER_WRITABLE_TYPES as readonly string[]).includes(type);
+}
+
+// DigitalOcean's adapter writes the same five types. Keep this explicit too:
+// widening RECORD_TYPES must not silently widen this adapter.
+const DIGITALOCEAN_WRITABLE_TYPES: readonly RecordType[] = ["A", "AAAA", "CNAME", "TXT", "MX"];
+export function isDigitalOceanWritable(type: string): type is RecordType {
+  return (DIGITALOCEAN_WRITABLE_TYPES as readonly string[]).includes(type);
+}
+
+// Spaceship's API-key adapter writes the same five types. Explicit for the same
+// reason: widening RECORD_TYPES must not silently widen this adapter.
+const SPACESHIP_WRITABLE_TYPES: readonly RecordType[] = ["A", "AAAA", "CNAME", "TXT", "MX"];
+/** True when `type` is writable by the Spaceship API-key connect. */
+export function isSpaceshipWritable(type: string): type is RecordType {
+  return (SPACESHIP_WRITABLE_TYPES as readonly string[]).includes(type);
+}
+
+// The OVHcloud consent connect (core ovh.ts) maps these five types to OVH's
+// `{fieldType, subDomain, target}` body. OVH also takes SRV and CAA, but their
+// packed `target` strings are unproven, so they stay guided until the adapter
+// explicitly supports them. Explicit for the same reason as the lists above.
+const OVH_WRITABLE_TYPES: readonly RecordType[] = ["A", "AAAA", "CNAME", "TXT", "MX"];
+/** True when `type` is writable by the OVHcloud consent connect (core ovh.ts). */
+export function isOvhWritable(type: string): type is RecordType {
+  return (OVH_WRITABLE_TYPES as readonly string[]).includes(type);
+}
 
 /** True when `type` is writable by the tier-1 (Cloudflare OAuth) connector. */
 export function isTier1Writable(type: string): type is RecordType {

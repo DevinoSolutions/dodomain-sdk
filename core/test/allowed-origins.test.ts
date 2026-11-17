@@ -63,7 +63,7 @@ void describe("normalizeAllowedOrigin", () => {
     assert.equal(normalizeAllowedOrigin("http://127.0.0.1:3000"), "http://127.0.0.1:3000");
   });
 
-  void it("refuses a wildcard, because no matcher exists to give it meaning yet", () => {
+  void it("refuses a wildcard, because allowed origins name individual sites", () => {
     assert.equal(normalizeAllowedOrigin("https://*.example.com"), null);
   });
 

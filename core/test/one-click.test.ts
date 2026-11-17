@@ -70,32 +70,85 @@ describe("oneClickAvailableFor answers for typical setups, failing closed", () =
       oneClickAvailableFor({
         tier: 1,
         templates: templates({ probed: false, reason: "not_tier_2" }),
+        ownApiOneClickEnabled: false,
       }),
       true,
     );
   });
 
   test("tier 2 on a GoDaddy-like provider that serves no template is NOT available", () => {
-    assert.equal(oneClickAvailableFor({ tier: 2, templates: templates(NOT_SERVED) }), false);
+    assert.equal(
+      oneClickAvailableFor({
+        tier: 2,
+        templates: templates(NOT_SERVED),
+        ownApiOneClickEnabled: false,
+      }),
+      false,
+    );
   });
 
   test("tier 2 on a provider that serves at least one template is available", () => {
     const mixed = templates(NOT_SERVED, { "custom-subdomain-cname": SERVED });
-    assert.equal(oneClickAvailableFor({ tier: 2, templates: mixed }), true);
-    assert.equal(oneClickAvailableFor({ tier: 2, templates: templates(SERVED) }), true);
+    assert.equal(
+      oneClickAvailableFor({ tier: 2, templates: mixed, ownApiOneClickEnabled: false }),
+      true,
+    );
+    assert.equal(
+      oneClickAvailableFor({ tier: 2, templates: templates(SERVED), ownApiOneClickEnabled: false }),
+      true,
+    );
   });
 
   test("tier 2 that was never probed is NOT available — unconfirmed is not a yes", () => {
     for (const reason of ["no_discovery", "flag_off", "probe_failed"] as const) {
       assert.equal(
-        oneClickAvailableFor({ tier: 2, templates: templates({ probed: false, reason }) }),
+        oneClickAvailableFor({
+          tier: 2,
+          templates: templates({ probed: false, reason }),
+          ownApiOneClickEnabled: false,
+        }),
         false,
         reason,
       );
     }
   });
 
-  test("tier 3 is never available, even if a stray outcome claims support", () => {
-    assert.equal(oneClickAvailableFor({ tier: 3, templates: templates(SERVED) }), false);
+  test("tier 3 without an enabled own integration is never available, even if a stray outcome claims support", () => {
+    assert.equal(
+      oneClickAvailableFor({ tier: 3, templates: templates(SERVED), ownApiOneClickEnabled: false }),
+      false,
+    );
+  });
+});
+
+describe("oneClickAvailableFor counts a provider's own one-click API integration", () => {
+  // Porkbun (DNS Connect) and Hostinger (OAuth) are detected as tier 3 "guided":
+  // their one-click is DoDomain's own integration, enabled per deployment, so
+  // the caller says whether it is on (apps/web lib/own-api-one-click.ts).
+  const NOT_PROBED = templates({ probed: false, reason: "not_tier_2" });
+
+  test("a tier-3 provider whose own one-click integration is enabled is available", () => {
+    assert.equal(
+      oneClickAvailableFor({ tier: 3, templates: NOT_PROBED, ownApiOneClickEnabled: true }),
+      true,
+    );
+  });
+
+  test("the same tier-3 provider with its integration disabled is NOT available", () => {
+    assert.equal(
+      oneClickAvailableFor({ tier: 3, templates: NOT_PROBED, ownApiOneClickEnabled: false }),
+      false,
+    );
+  });
+
+  test("an enabled own integration wins over a tier-2 probe that found nothing served", () => {
+    assert.equal(
+      oneClickAvailableFor({
+        tier: 2,
+        templates: templates(NOT_SERVED),
+        ownApiOneClickEnabled: true,
+      }),
+      true,
+    );
   });
 });

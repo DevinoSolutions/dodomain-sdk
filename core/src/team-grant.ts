@@ -17,6 +17,10 @@ export const DODOMAIN_TEAM_HEADER = "DoDomain-Team";
  * OAuth plugin's own `accept` and `oauth_query`. Absent on a denial. */
 export const TEAM_GRANT_SELECTION_FIELD = "dodomain_team_grant";
 
+/** The consent POST body field that carries the API scopes the person left ticked
+ * (the tier checkboxes, expanded). Sent only with an approval, beside the team choice. */
+export const TIER_SCOPES_FIELD = "dodomain_scopes";
+
 /**
  * The team selection one consent approval records: every team the user belongs
  * to (including teams joined later), or a named subset.

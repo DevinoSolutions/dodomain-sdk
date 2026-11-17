@@ -24,6 +24,7 @@
 // undici/node:dns policy itself. Enforced by scripts/check-discovery-guard-bans.sh.
 
 import { sharedBoundedResolver } from "./dns-defaults.ts";
+import { templateServiceIdForDnsProvider } from "./domain-connect-templates.ts";
 import type { DomainConnectProviderSettings } from "./domain-connect-types.ts";
 import type { ZoneWalkDeps } from "./zone-walk.ts";
 
@@ -178,6 +179,72 @@ export async function discover(domain: string, deps: DiscoveryDeps = {}): Promis
 // delegated zones the spec's own Root Domain definition names, and keep its
 // host/domain split semantics in the one place that needs them (domain-connect-config.ts's
 // `zoneRelativeHost`, which uses "@" for the apex as our templates require).
+
+/**
+ * Templates a DNS provider has told us, in writing, never to send it, even if
+ * its template endpoint ever answered 200 for them. Keyed by the `providerId`
+ * in the provider's OWN settings JSON (`parseSettings` above), like
+ * applyUrl.ts's emission-order table.
+ *
+ * GoDaddy (VJ, Senior PM DNS, 2026-11-04, on the "Domain Connect template
+ * onboarding - DoDomain" thread) onboarded the five purpose-specific templates
+ * and refused `dns-records`: a catch-all that "could manage records across
+ * multiple products, making later conflict resolution and safe record removal
+ * difficult". Every further product needs its own template. GoDaddy was also
+ * sent the `dns-records` file by hand on 2026-10-28, so a 404 today is not a
+ * guarantee for tomorrow; this table is.
+ *
+ * TODO(scope): GoDaddy's reseller platform (domainconnect.api.secureserver.net)
+ * serves the same five templates but publishes its own settings `providerId`,
+ * which we have not read (no reseller-hosted zone to query). Add it here once
+ * known; until then a reseller zone is protected only by its 404 for
+ * `dns-records`.
+ * scripts/check-template-variant-bans.sh (rule C) keeps production code from
+ * calling `isTemplateSupported` directly and skipping this table (the gap the
+ * PR #694 review named).
+ */
+const TEMPLATES_REFUSED_BY_DNS_PROVIDER: Readonly<Record<string, ReadonlySet<string>>> = {
+  "godaddy.com": new Set(["dns-records"]),
+};
+
+/**
+ * Has this DNS provider refused this template outright? Pure lookup over the
+ * table above. A `true` means "never build an apply URL for it here", so the
+ * session takes the manual path exactly as on a 404.
+ */
+export function dnsProviderRefusesTemplate(dnsProviderId: string, serviceId: string): boolean {
+  return (
+    TEMPLATES_REFUSED_BY_DNS_PROVIDER[dnsProviderId.trim().toLowerCase()]?.has(serviceId) ?? false
+  );
+}
+
+/**
+ * Does the discovered provider serve this template to US? The refusal table
+ * first (no request), then the provider's own template endpoint. Every
+ * production support check goes through here so a refused template can never
+ * reach an apply URL, a readiness probe or a preflight verdict.
+ *
+ * `serviceId` is the REGISTRY template (what the matcher compiled to, what the
+ * preflight matrix is keyed on). The endpoint is asked about the serviceId
+ * this provider is actually sent, its DNS-provider sibling where it has one
+ * (domain-connect-templates.ts `templateServiceIdForDnsProvider`: GoDaddy gets
+ * the `-v2` siblings of the three `token` templates), so a provider is judged
+ * on exactly the template the apply URL will name.
+ */
+export async function isTemplateServedBy(
+  settings: Pick<DomainConnectProviderSettings, "providerId" | "urlAPI">,
+  providerId: string,
+  serviceId: string,
+  deps: DiscoveryDeps = {},
+): Promise<boolean> {
+  if (dnsProviderRefusesTemplate(settings.providerId, serviceId)) return false;
+  return isTemplateSupported(
+    settings.urlAPI,
+    providerId,
+    templateServiceIdForDnsProvider(settings.providerId, serviceId),
+    deps,
+  );
+}
 
 /** Returns true if the DNS Provider supports the given template (200), false on 404. */
 export async function isTemplateSupported(

@@ -6,10 +6,20 @@
 // a public resolver for propagation UX.
 
 import { NODATA, NOTFOUND } from "node:dns";
-import { boundedResolver, DEFAULT_DNS_TIMEOUT_MS, DEFAULT_DNS_TRIES } from "./dns-defaults.ts";
-import { recordAnswerMatches } from "./record-capabilities.ts";
+import {
+  boundedResolver,
+  DEFAULT_DNS_TIMEOUT_MS,
+  DEFAULT_DNS_TRIES,
+  type DnsTtlResolver,
+} from "./dns-defaults.ts";
+import {
+  emailPolicyKindOf,
+  spfmIndirectionHost,
+  spfRecordSatisfiesThrough,
+} from "./email-records.ts";
+import { recordAnswerMatches, type LookupRecordType } from "./record-capabilities.ts";
 import type { ExpectedRecord, VerificationResult } from "./verify-types.ts";
-import { nearestZoneCut } from "./zone-walk.ts";
+import { defaultParentNs, nearestZoneCut, zoneNameServers, type ZoneNsDeps } from "./zone-walk.ts";
 
 // The bounded DNS defaults applied to BOTH resolvers built below (the public
 // recursive resolver AND the authoritative-NS-pinned one) now live in
@@ -26,6 +36,9 @@ import { nearestZoneCut } from "./zone-walk.ts";
  * would hang CI; that is the enforcing check for this convention).
  */
 export interface DnsResolver {
+  /** Only A/AAAA expose TTL through Node's typed resolver. Optional for existing
+   * injected resolvers; missing metadata is reported as unknown, never zero. */
+  resolveWithTtl?: DnsTtlResolver["resolveWithTtl"];
   resolveNs(host: string): Promise<string[]>;
   resolve4(host: string): Promise<string[]>;
   resolve6(host: string): Promise<string[]>;
@@ -52,6 +65,16 @@ export interface CaaAnswer {
   contactemail?: string;
   contactphone?: string;
 }
+
+// Node 24 may also include transport metadata such as type:"CAA". Only actual
+// CAA properties belong in a DNS presentation-format answer.
+const CAA_VALUE_TAGS = [
+  "issue",
+  "issuewild",
+  "iodef",
+  "contactemail",
+  "contactphone",
+] as const satisfies readonly (keyof Omit<CaaAnswer, "critical">)[];
 
 // Builds the "public" recursive resolver — a node:dns/promises Resolver bound to
 // the system's configured nameservers (identical servers to the bare
@@ -94,15 +117,24 @@ export type AuthoritativeResolution =
 // pinned to those nameservers' own IPs — bypassing recursive-resolver caches.
 // The pinned resolver carries the SAME bounded timeout/tries as the public one
 // (a black-holed authoritative NS is the primary stall vector this closes).
+//
+// The NS set itself comes from zone-walk.ts zoneNameServers (T-10301): the
+// zone's PARENT delegation when it can be read, the recursive answer as the
+// reported fallback. Pinning to a stale recursive NS set is how read-back
+// asked Vercel's servers for a zone that had moved to Porkbun (2026-10-29).
 async function authoritativeResolverFor(
   zone: string,
   resolver: DnsResolver,
   timeoutMs: number,
   tries: number,
+  nsDeps: Pick<ZoneNsDeps, "parentNs" | "onNsTrace"> = {},
 ): Promise<AuthoritativeResolution> {
   let ns: string[];
   try {
-    ns = await resolver.resolveNs(zone);
+    ({ nameServers: ns } = await zoneNameServers(zone, {
+      resolveNs: (host) => resolver.resolveNs(host),
+      ...nsDeps,
+    }));
   } catch (e) {
     // Same classification as lookup() below: ENOTFOUND/ENODATA is an ANSWER
     // ("no nameservers here"), anything else is the query failing.
@@ -147,6 +179,15 @@ export interface VerifyDeps {
   /** DNS retry count before giving up on a nameserver (both default resolvers). Default 2. */
   dnsTries?: number;
   /**
+   * The zone's NS as its parent delegates them (zone-walk.ts zoneNameServers).
+   * Default: the real parent lookup when `resolver` is NOT injected; none when
+   * it is, so an offline fixture never opens a socket. Ignored by an injected
+   * `authoritativeResolverFor`.
+   */
+  parentNs?: ZoneNsDeps["parentNs"];
+  /** Sink for NS disagreements / parent fallbacks. Default: one structured console.warn line (zone-walk.ts reportNsTrace). */
+  onNsTrace?: ZoneNsDeps["onNsTrace"];
+  /**
    * The zone whose authoritative nameservers to interrogate, when the caller
    * already resolved it. `verifyRecords` below sets this once per distinct zone
    * so a multi-record run pays the walk once; omit it and each call resolves
@@ -177,6 +218,7 @@ export interface VerifyDeps {
 async function owningZoneOf(fqdn: string, resolver: DnsResolver): Promise<string> {
   const { zone } = await nearestZoneCut(fqdn, {
     resolveNs: (host) => resolver.resolveNs(host),
+    resolveCname: (host) => resolver.resolveCname(host),
   });
   return zone;
 }
@@ -191,7 +233,9 @@ async function owningZoneOf(fqdn: string, resolver: DnsResolver): Promise<string
 // *record* query). Both fold into outcome:"indeterminate" — an
 // unconfirmable check must never read as "absent" (PLAN-F-011 §2c).
 export type LookupOutcome =
-  { kind: "records"; records: string[] } | { kind: "absent" } | { kind: "error"; code: string };
+  | { kind: "records"; records: string[]; ttls?: number[] }
+  | { kind: "absent" }
+  | { kind: "error"; code: string };
 
 const NS_RESOLUTION_FAILED = "NS_RESOLUTION_FAILED";
 
@@ -209,14 +253,33 @@ const NS_RESOLUTION_FAILED = "NS_RESOLUTION_FAILED";
 export async function lookupRecordAnswers(
   resolver: DnsResolver,
   fqdn: string,
-  type: ExpectedRecord["type"],
+  type: LookupRecordType,
+  includeTtl = false,
 ): Promise<LookupOutcome> {
   try {
+    if (includeTtl && (type === "A" || type === "AAAA") && resolver.resolveWithTtl) {
+      const answers = await resolver.resolveWithTtl(fqdn, type);
+      return {
+        kind: "records",
+        records: answers.map((a) => a.address),
+        ttls: answers.map((a) => a.ttl),
+      };
+    }
     let records: string[];
     if (type === "CNAME") records = await resolver.resolveCname(fqdn);
     else if (type === "A") records = await resolver.resolve4(fqdn);
     else if (type === "AAAA") records = await resolver.resolve6(fqdn);
-    else if (type === "MX") {
+    else if (type === "NS") records = await resolver.resolveNs(fqdn);
+    else if (type === "CAA") {
+      const caa = await resolver.resolveCaa(fqdn);
+      records = caa.flatMap((answer) =>
+        CAA_VALUE_TAGS.flatMap((tag) =>
+          answer[tag] === undefined
+            ? []
+            : [`${answer.critical} ${tag} ${JSON.stringify(answer[tag])}`],
+        ),
+      );
+    } else if (type === "MX") {
       const mx = await resolver.resolveMx(fqdn);
       records = mx.map((m) => `${m.priority} ${m.exchange}`);
     } else {
@@ -255,6 +318,37 @@ export function matches(found: string[], rec: ExpectedRecord): boolean {
 }
 
 /**
+ * An expected SPF record satisfied ACROSS a provider's SPFM indirection
+ * (email-records.ts `spfmIndirectionHost`): GoDaddy publishes the merged terms
+ * at `<id>._spfm.<zone>` and points the apex SPF record at it with one
+ * `include:` (live 2026-11-04 on dodomain.site), so `matches()` on the apex
+ * record alone never sees the include the session asked for.
+ *
+ * Bounded on purpose: only for an expected SPF TXT, only a `_spfm` include that
+ * is a strict subdomain of the zone being verified, only the first published
+ * record that has one, exactly one hop, asked of the SAME resolver the caller
+ * read the published record from (the zone's authoritative NS, or the public
+ * resolver for the propagation side). A failed lookup of the included record
+ * is fail-closed: it never reads as a match.
+ */
+async function matchesThroughSpfm(
+  found: string[],
+  rec: ExpectedRecord,
+  zone: string,
+  resolver: DnsResolver,
+): Promise<boolean> {
+  if (rec.type !== "TXT" || emailPolicyKindOf(rec.expect) !== "spf") return false;
+  for (const published of found) {
+    const host = spfmIndirectionHost(published, zone);
+    if (host === null) continue;
+    const included = await lookupRecordAnswers(resolver, host, "TXT");
+    if (included.kind !== "records") return false;
+    return included.records.some((via) => spfRecordSatisfiesThrough(rec.expect, published, via));
+  }
+  return false;
+}
+
+/**
  * Everything a DNS check needs to know about WHERE to ask for one name: the
  * zone that owns it, the public recursive resolver, and the zone's
  * authoritative resolution (or the reason one could not be built).
@@ -280,9 +374,16 @@ export async function resolveZoneAuthority(
   const timeoutMs = deps.dnsTimeoutMs ?? DEFAULT_DNS_TIMEOUT_MS;
   const tries = deps.dnsTries ?? DEFAULT_DNS_TRIES;
   const publicResolver = deps.resolver ?? makeBoundedResolver(timeoutMs, tries);
+  const parentNs =
+    deps.parentNs ??
+    defaultParentNs(deps.resolver !== undefined, { dnsTimeoutMs: timeoutMs, dnsTries: tries });
   const buildAuthoritative =
     deps.authoritativeResolverFor ??
-    ((zone, r) => authoritativeResolverFor(zone, r, timeoutMs, tries));
+    ((zone, r) =>
+      authoritativeResolverFor(zone, r, timeoutMs, tries, {
+        ...(parentNs ? { parentNs } : {}),
+        ...(deps.onNsTrace ? { onNsTrace: deps.onNsTrace } : {}),
+      }));
   const zone = deps.zone ?? (await owningZoneOf(fqdn, publicResolver));
   const authoritative = await buildAuthoritative(zone, publicResolver);
   return { zone, publicResolver, authoritative };
@@ -292,10 +393,11 @@ export async function verifyRecord(
   rec: ExpectedRecord,
   deps: VerifyDeps = {},
 ): Promise<VerificationResult> {
-  const { publicResolver: resolver, authoritative: auth } = await resolveZoneAuthority(
-    rec.fqdn,
-    deps,
-  );
+  const {
+    zone,
+    publicResolver: resolver,
+    authoritative: auth,
+  } = await resolveZoneAuthority(rec.fqdn, deps);
 
   // Anything but a built resolver means the zone's own nameservers were never
   // reached, so the record check couldn't run — grouped with a genuine lookup
@@ -318,8 +420,15 @@ export async function verifyRecord(
   // so the error path and the absent path both leave present:false
   // identically — an indeterminate lookup can NEVER set present:true.
   // `outcome` below is what tells the two apart.
-  const onAuth = matches(authoritativeFound, rec);
-  const onPublic = matches(publicFound, rec);
+  // An SPF record a provider published through its SPFM indirection counts on
+  // each side only when that side's own resolver also serves the included
+  // record (matchesThroughSpfm above).
+  const onAuth =
+    matches(authoritativeFound, rec) ||
+    (auth.kind === "resolver" &&
+      (await matchesThroughSpfm(authoritativeFound, rec, zone, auth.resolver)));
+  const onPublic =
+    matches(publicFound, rec) || (await matchesThroughSpfm(publicFound, rec, zone, resolver));
 
   const publicError = publicOutcome.kind === "error" ? publicOutcome.code : undefined;
 
@@ -345,14 +454,14 @@ export async function verifyRecord(
     if (nsAbsentCode !== undefined && publicOutcome.kind === "absent") {
       outcome = "domain_not_found";
       authoritativeError = nsAbsentCode;
-      note = "domain does not resolve — it may be unregistered, misspelled, or have no nameservers";
+      note = "domain does not resolve. It may be unregistered, misspelled, or have no nameservers";
     } else {
       outcome = "indeterminate";
       authoritativeError = authOutcome.code;
       note =
         authOutcome.code === NS_RESOLUTION_FAILED
           ? "could not resolve authoritative nameservers; public-only check"
-          : `authoritative DNS check failed (${authOutcome.code}); could not confirm — retry`;
+          : `authoritative DNS check failed (${authOutcome.code}); could not confirm. Retry`;
     }
   } else {
     outcome = "absent";
@@ -396,6 +505,24 @@ export async function verifyRecords(
 
   const timeoutMs = deps.dnsTimeoutMs ?? DEFAULT_DNS_TIMEOUT_MS;
   const tries = deps.dnsTries ?? DEFAULT_DNS_TRIES;
+  // Decided BEFORE `resolver` is defaulted below: every verifyRecord call gets
+  // that resolver passed explicitly, which would read as "injected" and turn
+  // the parent lookup off. Memoised per zone, like the NS cache, so a session's
+  // records pay one parent lookup for their shared zone.
+  const realParentNs =
+    deps.parentNs ??
+    defaultParentNs(deps.resolver !== undefined, { dnsTimeoutMs: timeoutMs, dnsTries: tries });
+  const parentCache = new Map<string, Promise<string[]>>();
+  const parentNs = realParentNs
+    ? (zone: string): Promise<string[]> => {
+        let pending = parentCache.get(zone);
+        if (!pending) {
+          pending = realParentNs(zone);
+          parentCache.set(zone, pending);
+        }
+        return pending;
+      }
+    : undefined;
   const resolver = deps.resolver ?? makeBoundedResolver(timeoutMs, tries);
 
   // The promise is cached synchronously, so concurrent walks asking for the
@@ -422,6 +549,8 @@ export async function verifyRecords(
 
   const zones = await Promise.all(recs.map((rec) => owningZoneOf(rec.fqdn, walkResolver)));
   return Promise.all(
-    recs.map((rec, i) => verifyRecord(rec, { ...deps, resolver, zone: zones[i]! })),
+    recs.map((rec, i) =>
+      verifyRecord(rec, { ...deps, resolver, zone: zones[i]!, ...(parentNs ? { parentNs } : {}) }),
+    ),
   );
 }

@@ -1,0 +1,42 @@
+name: Security audit
+
+# GENERATED from scripts/sdk/mirror-template/ in DevinoSolutions/dodomain; edit it THERE.
+#
+# Why this is inline and does not `uses:` the org reusable security-audit.yml: that
+# workflow lives in the PRIVATE repo DevinoSolutions/.github, and a public repo cannot
+# call a reusable workflow from a private one. So this is the `pnpm audit` half only
+# (no stale-override check; the mirror carries no overrides). Same scope as the
+# monorepo's nightly: production tree, high and above. GitHub-hosted runner: this repo
+# is public and has no self-hosted pool.
+#
+# No dependabot.yml here on purpose: sync-mirror wipes and re-lays this repo, so Dependabot
+# version PRs could never land, and Dependabot alerts work without a config file.
+#
+# Touches nothing in release-npm.yml and publishes nothing.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      # `pnpm audit` reads the lockfile; no install needed. Fails on high/critical;
+      # the fix is bumping the dependency, never lowering the level.
+      - name: pnpm audit (production tree, high and above)
+        run: pnpm audit --audit-level high --prod

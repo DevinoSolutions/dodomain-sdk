@@ -34,7 +34,10 @@ const session = await dodomain.sessions.create({
   domain: "customer.com",
   records: [
     { type: "CNAME", host: "app", value: "cname.sendly.io" },
-    { type: "TXT", host: "_verify", value: "sendly-domain-abc123" },
+    // Ownership TXT: keep this name and the dodomain-verify= prefix so GoDaddy and the
+    // other one-click (Domain Connect) providers can apply it; any other name falls back
+    // to guided manual setup there.
+    { type: "TXT", host: "_dodomain-challenge", value: "dodomain-verify=abc123" },
   ],
   returnUrl: "https://dashboard.sendly.io/domains",
 });
@@ -42,6 +45,62 @@ const session = await dodomain.sessions.create({
 // session.token   → hand to @dodomain/connect in the browser
 // session.connectUrl → or redirect the user to the hosted flow directly
 ```
+
+### Try it with no account (keyless mode)
+
+Keyless mode is new in `@dodomain/node` 0.9.0: with an older version, use the plain-`fetch`
+script in [Keyless start](https://dodomain.io/docs/getting-started#keyless-start) instead.
+
+No account and no key yet? A keyless client gets **10 test connections** for its keyless app.
+Claiming the app with a free account gives it its own secret key and moves it into your Free
+allowance of **50 verified connections a month**, shared with your other Free teams; paid plans
+raise that again ([pricing](https://dodomain.io/pricing)).
+
+```ts
+import { DoDomain } from "@dodomain/node";
+
+// Reuse the same keyless app across runs: its dd_ks_ key lives in your secret store or env.
+const dodomain = new DoDomain({ keyless: true, keylessKey: process.env.DODOMAIN_KEYLESS_KEY });
+
+const session = await dodomain.sessions.create({
+  domain: "customer.com",
+  records: [{ type: "CNAME", host: "app", value: "edge.yourproduct.com" }],
+});
+// session.connectUrl: open it, add the records, watch it verify.
+// session.keyless.allowance: { limit, used, open, remaining }.
+
+if (process.env.DODOMAIN_KEYLESS_KEY === undefined && dodomain.keylessKey !== null) {
+  // Returned once. Store it like a password (your secret manager, platform env vars or a
+  // gitignored .env); never log it, commit it or paste it anywhere public.
+  await saveSecret("DODOMAIN_KEYLESS_KEY", dodomain.keylessKey); // your own secret store
+}
+```
+
+Pass `appName` on the first `sessions.create` to name the test app: DoDomain's hosted connect
+page shows it next to a "Test app" chip, and it is never sent to a DNS provider until the app is
+claimed (until then the app is "DoDomain test app" everywhere else).
+
+`session.keyless.claimUrl` carries the key after its `#`. Hand it only to the person who will
+claim the app (your own UI or a direct message), never in a log, a commit, an issue or a public
+channel. `DoDomainError` bodies and `details` redact any `dd_ks_` key to `dd_ks_…`, so logging a
+caught error does not leak it.
+
+The first `sessions.create` calls `POST /api/v1/keyless/sessions` with no key, gets the API's
+`428` proof-of-work challenge, solves it with `node:crypto` (about 1 to 3 seconds at the usual
+20 bits; the API never asks for more than 24) and retries with the proof. If that retry is
+refused because the network now needs a harder proof or the challenge expired while solving, it
+solves the fresh challenge once more, never more. The client then keeps the returned `dd_ks_`
+key, so later calls need no proof. To keep using the same keyless app
+from another process, pass the key back: `new DoDomain({ keyless: true, keylessKey })`.
+
+Keyless mode is an explicit opt-in: `new DoDomain({ secretKey: undefined })` still throws, so an
+unset environment variable never turns a production client into a test app. A keyless client
+can only create sessions and read `dodomain.keyless.status()`; every other call throws
+`DoDomainKeylessError` with `code: "KEYLESS_MODE"` until you claim the app and switch to its
+`dd_sk_` key. Keyless refusals from the API (`KEYLESS_LIMIT_REACHED`, `KEYLESS_START_RATE_LIMITED`,
+`KEYLESS_CAPACITY_REACHED`, …) throw `DoDomainKeylessError` too, with the refusal's `details`
+(the limit and the link that unlocks more). Full rules:
+[dodomain.io/docs/getting-started#keyless-start](https://dodomain.io/docs/getting-started#keyless-start).
 
 ### Managing connections
 
@@ -87,7 +146,7 @@ session.records; // the composed fqdns DoDomain verifies, not the raw echo
 // Which provider, which zone, which connect flow — without creating a session.
 const check = await dodomain.domains.check({ domain: "app.customer.com" });
 check.tier; // 1 = Cloudflare one-click · 2 = Domain Connect · 3 = manual
-check.oneClickAvailable; // false on tier 2 when the provider serves none of our templates (e.g. GoDaddy)
+check.oneClickAvailable; // false on tier 2 when the provider serves none of our templates (e.g. IONOS); true for Porkbun at tier 3
 check.guide.steps; // what to tell the user if it comes to manual records
 ```
 
@@ -154,11 +213,14 @@ plus webhook signature verification.
 
 ### `new DoDomain(options)`
 
-| Option      | Type           | Notes                                                                                           |
-| ----------- | -------------- | ----------------------------------------------------------------------------------------------- |
-| `secretKey` | `string`       | Required. Must start with `dd_sk_`.                                                             |
-| `baseUrl`   | `string`       | API base. Defaults to `https://app.dodomain.io` (self-hosted/custom deployments override this). |
-| `fetchImpl` | `typeof fetch` | Override the fetch used (tests, custom agents).                                                 |
+| Option           | Type           | Notes                                                                                                         |
+| ---------------- | -------------- | ------------------------------------------------------------------------------------------------------------- |
+| `secretKey`      | `string`       | Required unless `keyless: true`. Must start with `dd_sk_`.                                                    |
+| `keyless`        | `true`         | Keyless mode: no account, no key ([above](#try-it-with-no-account-keyless-mode)).                             |
+| `keylessKey`     | `string`       | Keyless mode only: a `dd_ks_` key from an earlier keyless start, to reuse that app.                           |
+| `proofTimeoutMs` | `number`       | Keyless mode only: the most one proof-of-work solve may take, above 0 and at most `300000`. Default `120000`. |
+| `baseUrl`        | `string`       | API base. Defaults to `https://app.dodomain.io` (self-hosted/custom deployments override this).               |
+| `fetchImpl`      | `typeof fetch` | Override the fetch used (tests, custom agents).                                                               |
 
 ### `dodomain.sessions.create(input) → Promise<ConnectSessionSummary>`
 
@@ -171,6 +233,24 @@ The return type was named `Session` before 0.5.0; that alias is still exported, 
 
 Errors throw `DoDomainError` with `.status` and `.body`. A malformed (non-JSON) or
 schema-invalid response also throws `DoDomainError` — never a raw platform error.
+
+On a keyless client the same call goes to `POST /api/v1/keyless/sessions` (no `appId`: the
+keyless key is its app), and the result also carries `keyless: { key?, appId, allowance,
+claimUrl, unlock, docs }`. An optional second argument `{ signal }` aborts the request and, in
+keyless mode, the proof-of-work search.
+
+### `dodomain.keyless.status() → Promise<KeylessStatus>`
+
+Keyless mode only: `GET /api/v1/keyless`, the keyless app's `{ appId, allowance, claimUrl,
+unlock, docs, createdAt, lastUsedAt }`. Throws `DoDomainKeylessError` with
+`code: "KEYLESS_KEY_MISSING"` (and `status: 0`) before the client holds a `dd_ks_` key.
+
+### `solveKeylessProof(challenge, difficultyBits, { signal?, timeoutMs? }) → Promise<string>`
+
+The solver keyless mode uses, exported for callers that drive the REST API themselves. Resolves
+with the full header value `<challenge>:<nonce>` for the `DoDomain-Keyless-Proof` header.
+Rejects with `DoDomainKeylessError` (`KEYLESS_PROOF_UNSUPPORTED` above 24 bits,
+`KEYLESS_PROOF_ABORTED`, `KEYLESS_PROOF_TIMEOUT`).
 
 ### `dodomain.connections.list(filters?) → Promise<ListConnectionsResult>`
 

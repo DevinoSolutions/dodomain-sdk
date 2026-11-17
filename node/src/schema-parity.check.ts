@@ -9,6 +9,7 @@ import type { verifyWebhook as coreVerifyWebhook } from "@dodomain/core/webhook"
 import type { SessionRecord } from "@dodomain/core/records";
 import type {
   zCheckDomainInput,
+  zCreateKeylessSessionInput,
   zCreateSessionInput,
   zListConnectionsQuery,
   zProviderGuide,
@@ -20,6 +21,9 @@ import type {
   DeleteWebhookEndpointResponse as CoreDeleteWebhookEndpointResponse,
   DisconnectConnectionResponse as CoreDisconnectConnectionResponse,
   IntegratorSession as CoreIntegratorSession,
+  KeylessAllowance as CoreKeylessAllowance,
+  KeylessSessionResponse as CoreKeylessSessionResponse,
+  KeylessStatusResponse as CoreKeylessStatusResponse,
   ListAppsResponse as CoreListAppsResponse,
   ListConnectionsResponse as CoreListConnectionsResponse,
   ListWebhookEndpointsResponse as CoreListWebhookEndpointsResponse,
@@ -39,11 +43,15 @@ import type {
   CheckDomainResult,
   ConnectSessionSummary,
   Connection,
+  CreateKeylessSessionInput,
   CreateSessionInput,
   DeleteWebhookEndpointResult,
   DisconnectConnectionResult,
   DnsRecord,
   IntegratorSession,
+  KeylessAllowance,
+  KeylessConnectSessionSummary,
+  KeylessStatus,
   ListAppsResult,
   ListConnectionsInput,
   ListConnectionsResult,
@@ -115,4 +123,12 @@ export type SchemaParityPins = [
   // required while a caller legitimately omits it (the ListConnectionsInput
   // reasoning).
   Expect<MutuallyAssignable<RotateSecretKeyInput, z.input<typeof zRotateAppSecretKeyInput>>>,
+  // Keyless mode (0.9.0, T-18036): the body a keyless client sends, the
+  // session it gets back and the status read. ConnectSessionSummary carries
+  // the keyless block as OPTIONAL (a secret-key create never has it), so the
+  // exact keyless shape is pinned through KeylessConnectSessionSummary.
+  Expect<MutuallyAssignable<CreateKeylessSessionInput, z.infer<typeof zCreateKeylessSessionInput>>>,
+  Expect<MutuallyAssignable<KeylessAllowance, CoreKeylessAllowance>>,
+  Expect<MutuallyAssignable<KeylessConnectSessionSummary, CoreKeylessSessionResponse>>,
+  Expect<MutuallyAssignable<KeylessStatus, CoreKeylessStatusResponse>>,
 ];

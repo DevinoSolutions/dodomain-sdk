@@ -49,6 +49,17 @@ test("the built CJS bundle exports the same three names", async () => {
   assert.equal(typeof mod.verifyWebhook, "function");
 });
 
+test("both bundles export the keyless error and solver, and the solver runs from the build", async () => {
+  for (const file of ["index.js", "index.cjs"]) {
+    const mod: Record<string, unknown> = await import(pathToFileURL(path.join(distDir, file)).href);
+    assert.equal(typeof mod.DoDomainKeylessError, "function", `${file}: DoDomainKeylessError`);
+    const solve = mod.solveKeylessProof as (c: string, bits: number) => Promise<string>;
+    assert.equal(typeof solve, "function", `${file}: solveKeylessProof`);
+    // Same vector as test/keyless.test.ts (computed with Python's hashlib).
+    assert.equal(await solve("ARQAAAGa-test-vector", 8), "ARQAAAGa-test-vector:309");
+  }
+});
+
 test("index.d.ts declares the same public names", () => {
   const dts = readFileSync(path.join(distDir, "index.d.ts"), "utf8");
   for (const name of [
@@ -84,6 +95,15 @@ test("index.d.ts declares the same public names", () => {
     // returns, plus the deprecated alias an integrator on 0.4.x still imports.
     "ConnectSessionSummary",
     "Session",
+    // 0.9.0 keyless mode (T-18036): the options, the typed error, the solver
+    // and the shapes a keyless integrator narrows to.
+    "DoDomainKeylessOptions",
+    "DoDomainKeylessError",
+    "KeylessErrorCode",
+    "solveKeylessProof",
+    "KeylessConnectSessionSummary",
+    "KeylessSessionInfo",
+    "KeylessStatus",
   ]) {
     assert.ok(dts.includes(name), `index.d.ts missing "${name}"`);
   }

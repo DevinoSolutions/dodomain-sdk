@@ -20,16 +20,10 @@ import { defineConfig } from "tsup";
 export default defineConfig({
   entry: ["src/index.ts"],
   format: ["esm", "cjs"],
-  // TypeScript 7 shim (2026-08-26): tsup's dts step hardcodes
-  // `baseUrl: compilerOptions.baseUrl || "."` (tsup/dist/rollup.js), and this
-  // package's `typescript` is pinned to @typescript/typescript6 — the only JS
-  // Compiler API left, since typescript@7 ships the Go binary alone. TS 6 turns
-  // the baseUrl deprecation into the hard error TS5101, so tsup cannot emit a
-  // .d.ts at all without this opt-out. It silences ONLY the injected baseUrl:
-  // no tsconfig in this repo sets one (grep: zero hits), so nothing of ours is
-  // being excused. Delete it together with the typescript6 pin in package.json
-  // the moment tsup supports TypeScript 7. See packages/connect/package.json.
-  dts: { compilerOptions: { ignoreDeprecations: "6.0" } },
+  // tsup 9 no longer injects `baseUrl` into the dts compilerOptions, so the TS 6
+  // `ignoreDeprecations: "6.0"` opt-out (TS5101) is gone. The typescript6 alias
+  // stays: tsup still drives the JS Compiler API (.claude/rules/typescript-7.md).
+  dts: true,
   clean: true,
   sourcemap: true,
   platform: "browser",

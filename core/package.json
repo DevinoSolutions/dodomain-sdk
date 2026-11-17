@@ -9,6 +9,12 @@
   "exports": {
     ".": "./src/index.ts",
     "./cloudflare": "./src/cloudflare/config.ts",
+    "./hostinger": "./src/hostinger.ts",
+    "./digitalocean": "./src/digitalocean.ts",
+    "./ovh": "./src/ovh.ts",
+    "./ovh-region": "./src/ovh-region.ts",
+    "./porkbun": "./src/porkbun.ts",
+    "./spaceship": "./src/spaceship.ts",
     "./records": "./src/records.ts",
     "./domain-connect-templates": "./src/domain-connect-templates.ts",
     "./guides": "./src/guides.ts",
@@ -22,6 +28,7 @@
     "./preflight-copy": "./src/preflight-copy.ts",
     "./one-click": "./src/one-click.ts",
     "./spf-types": "./src/spf-types.ts",
+    "./provider-slug": "./src/provider-slug.ts",
     "./provider-watch": "./src/provider-watch.ts",
     "./cdn-proxy-ranges": "./src/cdn-proxy-ranges.ts",
     "./zod-runtime": "./src/zod-runtime.ts"
@@ -34,10 +41,10 @@
   },
   "dependencies": {
     "tldts": "^7.4.7",
-    "zod": "^4.1.5"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@types/node": "^22.10.5",
+    "@types/node": "^24.19.2",
     "typescript": "^7.0.2"
   }
 }

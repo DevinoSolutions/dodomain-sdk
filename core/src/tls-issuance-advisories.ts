@@ -115,7 +115,7 @@ function unchecked(fqdn: string, evidenceFqdn: string, reason: string): TlsIssua
     fqdn,
     evidenceFqdn,
     evidence: [],
-    note: `Could not check CAA or ACME challenge records for ${fqdn} (${reason}) — issuance may still be blocked by DNS you can't see here.`,
+    note: `Could not check CAA or ACME challenge records for ${fqdn} (${reason}). Issuance may still be blocked by DNS you can't see here.`,
   };
 }
 
@@ -170,7 +170,7 @@ export function judgeCaaAnswers(
     note:
       permitted.size === 0
         ? `A CAA policy at ${owner} forbids every certificate authority (an empty issuer), so no certificate can be issued for this name until it is changed to allow ${tlsIssuerCa}.`
-        : `A CAA policy at ${owner} allows only ${[...permitted].join(", ")} to issue certificates — ${tlsIssuerCa} is not on it, so issuance for this name will fail until a CAA record for ${tlsIssuerCa} is added.`,
+        : `A CAA policy at ${owner} allows only ${[...permitted].join(", ")} to issue certificates. ${tlsIssuerCa} is not on it, so issuance for this name will fail until a CAA record for ${tlsIssuerCa} is added.`,
   };
 }
 
@@ -211,7 +211,7 @@ async function acmeChallengeAdvisoryFor(
       fqdn,
       evidenceFqdn: challengeName,
       evidence: cname.answers.map((target) => `CNAME ${target}`),
-      note: `${challengeName} is delegated to another provider. A certificate authority validating this name over DNS follows that delegation, so issuance fails unless that provider still answers for it — remove the CNAME if it belongs to a previous vendor.`,
+      note: `${challengeName} is delegated to another provider. A certificate authority validating this name over DNS follows that delegation, so issuance fails unless that provider still answers for it. Remove the CNAME if it belongs to a previous vendor.`,
     };
   }
 
@@ -228,7 +228,7 @@ async function acmeChallengeAdvisoryFor(
     fqdn,
     evidenceFqdn: challengeName,
     evidence: values,
-    note: `${challengeName} already holds ${values.length === 1 ? "a validation token" : `${values.length} validation tokens`} from an earlier certificate request. A stale token can make a new DNS-01 validation fail — remove it if it isn't for the certificate you're about to issue.`,
+    note: `${challengeName} already holds ${values.length === 1 ? "a validation token" : `${values.length} validation tokens`} from an earlier certificate request. A stale token can make a new DNS-01 validation fail. Remove it if it isn't for the certificate you're about to issue.`,
   };
 }
 
