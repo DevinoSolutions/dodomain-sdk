@@ -1,19 +1,40 @@
 // The SDK's error types. Their own module (not index.ts) so keyless.ts can
 // throw them without an import cycle back through the entry point.
 
+/** The API's machine-readable values on a refusal, when it sent them. */
+export interface DoDomainErrorFields {
+  /** The machine error (`body.error`, e.g. `"invalid_request"`, `"quota_exceeded"`). */
+  error?: string;
+  /** The stable denial code (`body.code`, e.g. `"KEYLESS_LIMIT_REACHED"`). */
+  code?: string;
+}
+
+/**
+ * Any failed call. For an API refusal, `message` is the machine error followed
+ * by the API's own human text (`"invalid_request: \"customer.com\" is a
+ * placeholder ..."`), so a logged `e.message` says what went wrong and what to
+ * do; with no human text it is the machine error alone, or `HTTP <status>`.
+ * Branch on `error` and `code` rather than parsing `message`. `error` and
+ * `code` are `undefined` on errors this SDK raised itself (`status: 0`) and on
+ * answers that carry none.
+ */
 export class DoDomainError extends Error {
   readonly status: number;
   readonly body: unknown;
-  constructor(message: string, status: number, body: unknown) {
+  readonly error: string | undefined;
+  readonly code: string | undefined;
+  constructor(message: string, status: number, body: unknown, fields: DoDomainErrorFields = {}) {
     super(message);
     this.name = "DoDomainError";
     this.status = status;
     this.body = body;
+    this.error = fields.error;
+    this.code = fields.code;
   }
 }
 
 /**
- * The codes a keyless failure carries. The first seven are the API's own
+ * The codes a keyless failure carries. The first eight are the API's own
  * (`body.code` on a keyless refusal); the last five are raised by this SDK
  * before or instead of a request, always with `status: 0`.
  */
@@ -25,6 +46,7 @@ export type KeylessErrorCode =
   | "KEYLESS_KEY_CLAIMED"
   | "KEYLESS_KEY_NOT_ACCEPTED"
   | "KEYLESS_DISABLED"
+  | "KEYLESS_PLACEHOLDER_DOMAIN"
   | "KEYLESS_PROOF_TIMEOUT"
   | "KEYLESS_PROOF_ABORTED"
   | "KEYLESS_PROOF_UNSUPPORTED"
@@ -40,7 +62,7 @@ export type KeylessErrorCode =
  * API sent one.
  */
 export class DoDomainKeylessError extends DoDomainError {
-  readonly code: KeylessErrorCode;
+  declare readonly code: KeylessErrorCode;
   readonly details: Record<string, unknown> | undefined;
   constructor(
     message: string,
@@ -48,10 +70,10 @@ export class DoDomainKeylessError extends DoDomainError {
     body: unknown,
     code: KeylessErrorCode,
     details?: Record<string, unknown>,
+    error?: string,
   ) {
-    super(message, status, body);
+    super(message, status, body, { code, error });
     this.name = "DoDomainKeylessError";
-    this.code = code;
     this.details = details;
   }
 }
@@ -64,6 +86,7 @@ const API_KEYLESS_CODES: ReadonlySet<string> = new Set<KeylessErrorCode>([
   "KEYLESS_KEY_CLAIMED",
   "KEYLESS_KEY_NOT_ACCEPTED",
   "KEYLESS_DISABLED",
+  "KEYLESS_PLACEHOLDER_DOMAIN",
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -95,21 +118,35 @@ export function redactKeylessKeys(value: unknown): unknown {
   return value;
 }
 
+/** The human text of a refusal: RFC 9457 `detail`, else the house `message`. */
+function humanText(body: Record<string, unknown>): string | undefined {
+  for (const text of [body.detail, body.message]) {
+    if (typeof text === "string" && text.trim() !== "") return text.trim();
+  }
+  return undefined;
+}
+
 /** The error a non-2xx JSON answer becomes: typed when the body names a
  * keyless code, the plain `DoDomainError` otherwise. Any `dd_ks_` key in the
- * answer is redacted (redactKeylessKeys) before it reaches the error. */
+ * answer is redacted (redactKeylessKeys) before it reaches the error, the
+ * message included: it is built from the redacted body. */
 export function errorFromResponse(status: number, json: unknown): DoDomainError {
   const redacted = redactKeylessKeys(json);
   const body = isRecord(redacted) ? redacted : {};
-  const message = typeof body.error === "string" ? body.error : `HTTP ${status}`;
-  if (typeof body.code === "string" && API_KEYLESS_CODES.has(body.code)) {
+  const error = typeof body.error === "string" ? body.error : undefined;
+  const code = typeof body.code === "string" ? body.code : undefined;
+  const human = humanText(body);
+  const machine = error ?? `HTTP ${status}`;
+  const message = human === undefined || human === machine ? machine : `${machine}: ${human}`;
+  if (code !== undefined && API_KEYLESS_CODES.has(code)) {
     return new DoDomainKeylessError(
       message,
       status,
       redacted,
-      body.code as KeylessErrorCode,
+      code as KeylessErrorCode,
       isRecord(body.details) ? body.details : undefined,
+      error,
     );
   }
-  return new DoDomainError(message, status, redacted);
+  return new DoDomainError(message, status, redacted, { error, code });
 }

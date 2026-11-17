@@ -281,7 +281,11 @@ test("a spent allowance surfaces as a typed KEYLESS_LIMIT_REACHED with the unloc
   await assert.rejects(dd.sessions.create(INPUT), (error: unknown) => {
     assert.ok(error instanceof DoDomainKeylessError);
     assert.equal(error.code, "KEYLESS_LIMIT_REACHED");
-    assert.equal(error.message, "quota_exceeded");
+    assert.equal(
+      error.message,
+      "quota_exceeded: This keyless app used its 10 verified connections.",
+    );
+    assert.equal(error.error, "quota_exceeded");
     assert.equal(error.status, 402);
     assert.equal(error.details?.limit, 10);
     return true;

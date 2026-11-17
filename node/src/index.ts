@@ -139,7 +139,7 @@ export type {
 export const verifyWebhook: VerifyWebhook = coreVerifyWebhook;
 
 export { DoDomainError, DoDomainKeylessError } from "./errors.ts";
-export type { KeylessErrorCode } from "./errors.ts";
+export type { DoDomainErrorFields, KeylessErrorCode } from "./errors.ts";
 export {
   KEYLESS_MAX_DIFFICULTY_BITS,
   solveKeylessProof,

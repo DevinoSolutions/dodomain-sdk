@@ -100,7 +100,7 @@ unset environment variable never turns a production client into a test app. A ke
 can only create sessions and read `dodomain.keyless.status()`; every other call throws
 `DoDomainKeylessError` with `code: "KEYLESS_MODE"` until you claim the app and switch to its
 `dd_sk_` key. Keyless refusals from the API (`KEYLESS_LIMIT_REACHED`, `KEYLESS_START_RATE_LIMITED`,
-`KEYLESS_CAPACITY_REACHED`, …) throw `DoDomainKeylessError` too, with the refusal's `details`
+`KEYLESS_CAPACITY_REACHED`, `KEYLESS_PLACEHOLDER_DOMAIN`, …) throw `DoDomainKeylessError` too, with the refusal's `details`
 (the limit and the link that unlocks more). Full rules:
 [dodomain.io/docs/getting-started#keyless-start](https://dodomain.io/docs/getting-started#keyless-start).
 
@@ -234,7 +234,25 @@ The return type was named `Session` before 0.5.0; that alias is still exported, 
 `@deprecated`, and will be removed in the next major — import `ConnectSessionSummary`.
 
 Errors throw `DoDomainError` with `.status` and `.body`. A malformed (non-JSON) or
-schema-invalid response also throws `DoDomainError` — never a raw platform error.
+schema-invalid response also throws `DoDomainError` — never a raw platform error. An API
+refusal's `.message` is its machine error followed by the API's own explanation (since 0.9.2),
+and `.error` / `.code` carry the machine values, so branch on those, not on the message:
+
+```ts
+import { DoDomainError, DoDomainKeylessError } from "@dodomain/node";
+
+try {
+  await dodomain.sessions.create({ domain: "customer.com", records });
+} catch (e) {
+  if (e instanceof DoDomainKeylessError) {
+    // e.message: 'invalid_request: "customer.com" is a placeholder or reserved name, ...'
+    // e.code: "KEYLESS_PLACEHOLDER_DOMAIN"; on a 402, e.details?.retryAt says when to retry.
+    console.error(e.message, e.code, e.details?.retryAt);
+  } else if (e instanceof DoDomainError) {
+    console.error(e.message, e.error, e.code, e.status);
+  }
+}
+```
 
 On a keyless client the same call goes to `POST /api/v1/keyless/sessions` (no `appId`: the
 keyless key is its app), and the result also carries `keyless: { key?, appId, allowance,
