@@ -84,9 +84,9 @@ test("toExpectedRecords omits priority when the source record has none (non-MX t
   assert.ok(!("priority" in out[0]!));
 });
 
-test("toExpectedRecords drops unsupported record types", () => {
+test("toExpectedRecords drops unsupported record types (ALIAS has no wire type)", () => {
   const out = toExpectedRecords(
-    [{ type: "NS" as unknown as "TXT", host: "@", value: "x" }],
+    [{ type: "ALIAS" as unknown as "TXT", host: "@", value: "x" }],
     "acme.com",
   );
   assert.equal(out.length, 0);

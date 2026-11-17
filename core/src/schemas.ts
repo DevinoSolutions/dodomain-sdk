@@ -18,8 +18,9 @@ import {
   type DomainConnectServiceId,
 } from "./domain-connect-templates.ts";
 import type { ProviderGuide } from "./guides.ts";
-import { LOOKUP_RECORD_TYPES, RECORD_TYPES } from "./record-capabilities.ts";
+import { LOOKUP_RECORD_TYPES, missingRecordFields, RECORD_TYPES } from "./record-capabilities.ts";
 import type { CompiledRecipe } from "./recipes.ts";
+import { CONNECT_SESSION_MODES } from "./sandbox.ts";
 import {
   SPF_ISSUE_CODES,
   SPF_ISSUE_SEVERITIES,
@@ -77,6 +78,48 @@ const zDomainName = z
     message: "Enter a domain like app.customer.com (no scheme, port, or trailing dot).",
   });
 
+/**
+ * Creation-only per-type field rules for the records a NEW session requests
+ * (record-capabilities.ts `missingRecordFields`): SRV needs priority, weight and
+ * port; CAA needs flags and tag, and its value may not carry a double quote
+ * (the CAA presentation format quotes the value, and Porkbun's content string
+ * and verify.ts's answer spelling both embed it quoted). MX is deliberately
+ * left to the create route's `missing_mx_priority` refusal (legacy stored rows,
+ * see `missingRecordFields`). On `zCreateSessionInput` and never on zRecords,
+ * for the same reason the record cap is: zRecords also parses stored rows.
+ */
+/** A code-point scan, not a regex: a C0 character class is exactly what
+ * `no-control-regex` flags (same choice as apps/web safe-next-path.ts). */
+function hasQuoteOrControlChar(value: string): boolean {
+  for (const ch of value) {
+    const code = ch.codePointAt(0)!;
+    if (ch === '"' || code < 0x20 || code === 0x7f) return true;
+  }
+  return false;
+}
+
+function refineCreateSessionRecordFields(
+  records: z.infer<typeof zRecords>,
+  ctx: z.RefinementCtx,
+): void {
+  records.forEach((record, index) => {
+    if (record.type === "MX") return;
+    const problem = missingRecordFields(record);
+    if (problem !== null) {
+      for (const field of problem.fields) {
+        ctx.addIssue({ code: "custom", path: [index, field], message: problem.message });
+      }
+    }
+    if (record.type === "CAA" && hasQuoteOrControlChar(record.value)) {
+      ctx.addIssue({
+        code: "custom",
+        path: [index, "value"],
+        message: "A CAA value may not contain a double quote or a control character",
+      });
+    }
+  });
+}
+
 export const zCreateSessionInput = z.object({
   // W4 MCP: OAuth-token callers are TEAM-scoped (not app-scoped like a
   // dd_sk_ secret key), so they pass appId to pick which app the session
@@ -88,9 +131,11 @@ export const zCreateSessionInput = z.object({
   /** Accepted and stored for wire-compat; consumed by nothing (see above). */
   recipe: z.string().optional(),
   /** Bounded at MAX_SESSION_RECORDS (records.ts holds the number and why). */
-  records: zRecords.max(MAX_SESSION_RECORDS, {
-    message: `A session carries at most ${MAX_SESSION_RECORDS} records.`,
-  }),
+  records: zRecords
+    .max(MAX_SESSION_RECORDS, {
+      message: `A session carries at most ${MAX_SESSION_RECORDS} records.`,
+    })
+    .superRefine(refineCreateSessionRecordFields),
   /**
    * Where the hosted flow offers to send the user back. Rendered as an <a
    * href> on the connect page (connect-flow.tsx) and echoed by the public
@@ -160,11 +205,22 @@ export type SessionWarning = z.infer<typeof zSessionWarning>;
 // "links.links.acme.com" only from a failing verify. `records` is required (the
 // route always builds it from the same helper verification uses), `warnings` is
 // present only when something is worth saying.
+/**
+ * A session's mode (T-18114). `live` checks real DNS; `sandbox` is a session
+ * for one of the reserved sandbox names (`verified.test`, `pending.test`,
+ * `slow.test`, `wrong-record.test`, `unsupported.test`, packages/core
+ * sandbox.ts): simulated results, no DNS, not counted against any limit. Decided
+ * by the server from the domain at creation, never by the caller.
+ */
+export const zConnectSessionMode = z.enum(CONNECT_SESSION_MODES);
+
 export const zCreateSessionResponse = z.object({
   id: z.string(),
   token: z.string().min(1),
   expiresAt: z.iso.datetime(),
   connectUrl: z.string().min(1),
+  /** `live`, or `sandbox` for a reserved sandbox name (zConnectSessionMode). */
+  mode: zConnectSessionMode,
   /** The composed names this session will be verified at — one per requested record. */
   records: z.array(zComposedRecord),
   /** Advisories about an accepted request; omitted when there are none. */
@@ -238,8 +294,6 @@ const zKeylessBlock = z.object({
 
 /** Response of `POST /api/v1/keyless/sessions`. */
 export const zKeylessSessionResponse = zCreateSessionResponse.extend({
-  /** Always `live` today: a keyless session checks real DNS. */
-  mode: z.literal("live"),
   keyless: zKeylessBlock,
 });
 
@@ -509,6 +563,10 @@ export const zConnectionVerifiedPayload = z.object({
    * regardless.
    */
   tlsIssuanceAdvisories: z.array(zTlsIssuanceAdvisory).optional(),
+  /** ADDITIVE (T-18114): present, and `true`, only on an event for a sandbox
+   * session (a reserved `.test` name, simulated, never metered). Absent on
+   * every live session's event. */
+  sandbox: z.literal(true).optional(),
 });
 export type ConnectionVerifiedPayload = z.infer<typeof zConnectionVerifiedPayload>;
 
@@ -553,6 +611,10 @@ export const zConnectionDnsDriftPayload = z.object({
   scope: z.literal("connection"),
   /** The expected records that no longer match on authoritative DNS. */
   records: z.array(z.object({ fqdn: z.string(), type: z.string() })),
+  /** ADDITIVE (T-18114): present, and `true`, only on an event for a sandbox
+   * session (a reserved `.test` name, simulated, never metered). Absent on
+   * every live session's event. */
+  sandbox: z.literal(true).optional(),
 });
 export type ConnectionDnsDriftPayload = z.infer<typeof zConnectionDnsDriftPayload>;
 
@@ -578,6 +640,10 @@ export const zConnectionSessionFailedPayload = z.object({
   failedStep: z.enum(["oauth_authorize", "record_write"]),
   /** Best-effort human-readable detail (e.g. the thrown error's message). */
   error: z.string().optional(),
+  /** ADDITIVE (T-18114): present, and `true`, only on an event for a sandbox
+   * session (a reserved `.test` name, simulated, never metered). Absent on
+   * every live session's event. */
+  sandbox: z.literal(true).optional(),
 });
 export type ConnectionSessionFailedPayload = z.infer<typeof zConnectionSessionFailedPayload>;
 
@@ -603,6 +669,10 @@ export const zConnectionDisconnectedPayload = z.object({
   connectionId: z.string(),
   fqdn: z.string(),
   disconnectedAt: z.iso.datetime(),
+  /** ADDITIVE (T-18114): present, and `true`, only on an event for a sandbox
+   * session (a reserved `.test` name, simulated, never metered). Absent on
+   * every live session's event. */
+  sandbox: z.literal(true).optional(),
 });
 export type ConnectionDisconnectedPayload = z.infer<typeof zConnectionDisconnectedPayload>;
 
@@ -617,6 +687,10 @@ export const zSessionCompletedPayload = z.object({
   connectionId: z.string(),
   /** ADDITIVE — same field and same rule as zConnectionVerifiedPayload: present only when non-empty. */
   tlsIssuanceAdvisories: z.array(zTlsIssuanceAdvisory).optional(),
+  /** ADDITIVE (T-18114): present, and `true`, only on an event for a sandbox
+   * session (a reserved `.test` name, simulated, never metered). Absent on
+   * every live session's event. */
+  sandbox: z.literal(true).optional(),
 });
 export type SessionCompletedPayload = z.infer<typeof zSessionCompletedPayload>;
 
@@ -626,6 +700,10 @@ export const zSessionAbandonedPayload = z.object({
   /** The session's last status before the reaper persisted `expired`. */
   lastStatus: z.string(),
   expiredAt: z.iso.datetime(),
+  /** ADDITIVE (T-18114): present, and `true`, only on an event for a sandbox
+   * session (a reserved `.test` name, simulated, never metered). Absent on
+   * every live session's event. */
+  sandbox: z.literal(true).optional(),
 });
 export type SessionAbandonedPayload = z.infer<typeof zSessionAbandonedPayload>;
 

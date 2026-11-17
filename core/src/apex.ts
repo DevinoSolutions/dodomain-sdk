@@ -26,3 +26,17 @@ export function apexOf(fqdn: string): string {
   const host = fqdn.trim().replace(/\.$/, "").toLowerCase();
   return getDomain(host) ?? host;
 }
+
+/**
+ * True when an NS record at `fqdn` would sit at the REGISTRABLE apex, the one
+ * place a connect session may never put one: the apex NS set is the domain's
+ * own delegation from its registry, so writing it there would hand the whole
+ * domain to another nameserver set (Porkbun DNS Connect refuses it too: "NS
+ * below the root only"). An NS below the apex is a subdomain delegation, which
+ * record-capabilities.ts RECORD_TYPES accepts. Checked at session creation
+ * (apps/web sessions route) and again by both one-click writers.
+ */
+export function isNsAtZoneApex(fqdn: string): boolean {
+  const host = fqdn.trim().replace(/\.$/, "").toLowerCase();
+  return apexOf(host) === host;
+}

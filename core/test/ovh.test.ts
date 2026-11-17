@@ -15,7 +15,7 @@ import {
   signOvhRequest,
   zOvhCallback,
 } from "../src/ovh.ts";
-import { isOvhWritable, RECORD_TYPES } from "../src/record-capabilities.ts";
+import { RECORD_TYPES, TIER_WRITABLE_TYPES } from "../src/record-capabilities.ts";
 import type { SessionRecord } from "../src/records.ts";
 
 // Vectors from OVH's own wrapper test suite, github.com/ovh/python-ovh
@@ -237,8 +237,8 @@ test("OVH record bodies are zone-relative, CNAME and MX absolute with a trailing
     ovhRecordBodies("customer.com", [{ type: "A", host: "@", value: "192.0.2.1" }], zone),
     [{ fieldType: "A", subDomain: "", target: "192.0.2.1" }],
   );
-  assert.deepEqual(RECORD_TYPES.filter(isOvhWritable), ["A", "AAAA", "CNAME", "TXT", "MX"]);
-  for (const type of RECORD_TYPES.filter((t) => !isOvhWritable(t)))
+  assert.deepEqual(TIER_WRITABLE_TYPES.ovh_consent, ["A", "AAAA", "CNAME", "TXT", "MX"]);
+  for (const type of RECORD_TYPES.filter((t) => !TIER_WRITABLE_TYPES.ovh_consent.includes(t)))
     assert.throws(
       () => ovhRecordBodies("customer.com", [{ type, host: "@", value: "x" }], zone),
       OvhError,

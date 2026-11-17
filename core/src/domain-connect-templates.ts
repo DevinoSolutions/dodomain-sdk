@@ -19,14 +19,14 @@
 //
 // Pure data, no `node:` imports, no env (scripts/check-core-config-bans.sh).
 
-import type { RecordType } from "./record-capabilities.ts";
+import type { DomainConnectSessionRecordType, RecordType } from "./record-capabilities.ts";
 
 /** The record types the JSON templates are written in: the session record
- * types, SPF as `SPFM` — the merge pseudo-type a provider folds into the zone's
- * existing `v=spf1` TXT (spec §"SPFM"), never as a second SPF TXT — and the
- * three types only the `dns-records` slots declare (SRV, NS, CAA), which no
- * session record can carry yet (see `sessionType: null` below). */
-export type DomainConnectTemplateRecordType = RecordType | "SPFM" | "SRV" | "NS" | "CAA";
+ * types (SRV, NS and CAA included, which only the `dns-records` slots declare
+ * and the matcher does not route to yet, see `sessionType: null` below) and SPF
+ * as `SPFM`, the merge pseudo-type a provider folds into the zone's existing
+ * `v=spf1` TXT (spec §"SPFM"), never as a second SPF TXT. */
+export type DomainConnectTemplateRecordType = RecordType | "SPFM";
 
 /**
  * How a session record's VALUE becomes the template's variable(s).
@@ -94,14 +94,14 @@ export interface SrvSlotVariables {
 export interface DomainConnectTemplateRecordShape {
   /**
    * The type the SESSION record carries (what the verifier checks). `null` for
-   * a slot no session record can fill: the SRV / NS / CAA slots of
+   * a slot no session record is routed to: the SRV / NS / CAA slots of
    * `dns-records`. They are declared so the template GoDaddy and the registry
-   * approve is complete once, and become fillable the day the session record
-   * model carries those types (DESIGN.md "Feature 1"). TODO(scope): sessions
-   * accept only A/AAAA/CNAME/TXT/MX (record-capabilities.ts), so these slots
-   * are never applied yet.
+   * approve is complete once. TODO(scope): the session record model now accepts
+   * SRV, CAA and below-root NS (record-capabilities.ts), but this matcher does
+   * not route them to these slots yet, so they are never applied; wiring that
+   * is a separate change (DESIGN.md "Feature 1").
    */
-  sessionType: RecordType | null;
+  sessionType: DomainConnectSessionRecordType | null;
   /** The type written in the template JSON — differs from `sessionType` only
    * for SPF (`SPFM`) and the unfillable SRV / NS / CAA slots. */
   templateType: DomainConnectTemplateRecordType;
@@ -288,7 +288,7 @@ function slotNumberWord(name: string): string {
  * (`sessionType: null`) name both sides through `extra`. */
 function slot(
   name: string,
-  type: RecordType | null,
+  type: DomainConnectSessionRecordType | null,
   extra: Partial<DomainConnectTemplateRecordShape> = {},
 ): DomainConnectTemplateRecordShape {
   const templateType = extra.templateType ?? type;
@@ -881,7 +881,7 @@ export function templateSessionRecordTypes(template: DomainConnectTemplate): Rec
     ...new Set(
       template.records
         .map((r) => r.sessionType)
-        .filter((type): type is RecordType => type !== null),
+        .filter((type): type is DomainConnectSessionRecordType => type !== null),
     ),
   ];
 }

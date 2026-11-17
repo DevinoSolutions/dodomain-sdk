@@ -469,7 +469,7 @@ test("a deadline during the first CNAME query prevents the next chain hop", asyn
   assert.equal(queries, 1);
 });
 
-test("DNS lookup adds the engine's NS and CAA types without widening connect capabilities", async () => {
+test("DNS lookup reads NS and CAA, which connect sessions now accept too (one type list)", async () => {
   for (const type of ["NS", "CAA"] as const satisfies readonly LookupRecordType[]) {
     const result = await lookupRecordAcrossResolvers(
       "example.com",
@@ -478,7 +478,7 @@ test("DNS lookup adds the engine's NS and CAA types without widening connect cap
     );
     assert.equal(result.authoritative.outcome, "answers");
     assert.equal(result.consistent, true);
-    assert.equal(isRecordType(type), false);
+    assert.equal(isRecordType(type), true);
     assert.equal(LOOKUP_RECORD_TYPES.includes(type), true);
     if (type === "CAA")
       assert.deepEqual(result.authoritative.answers, ['0 issue "letsencrypt.org"']);

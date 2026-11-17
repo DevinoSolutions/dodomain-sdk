@@ -28,6 +28,9 @@ export * from "./dns-tools.ts";
 // post-connect re-check only; initial verification stays strict.
 export * from "./cdn-proxy.ts";
 export * from "./cdn-proxy-ranges.ts";
+// The keyless sandbox (T-18114): the reserved `.test` names, the session mode
+// derivation and the simulated detection/verify results. Pure, client-safe.
+export * from "./sandbox.ts";
 // The preflight honesty copy (also "@dodomain/core/preflight-copy" for client bundles).
 export * from "./preflight-copy.ts";
 // The nightly provider-watch snapshot shape (also "@dodomain/core/provider-watch").
@@ -38,7 +41,7 @@ export * from "./detect.ts";
 // `nearestZoneCut` below, which merely FLOORS at the apex. Reaching for apexOf
 // to pick nameservers, a discovery target, or a template's zone is the bug
 // fixed three times over in 2026-08 (detect, the apply pre-flight, verify).
-export { apexOf } from "./apex.ts";
+export { apexOf, isNsAtZoneApex } from "./apex.ts";
 // Which zone OWNS a host's records (the nearest delegation cut, floored at the
 // apex). Exported because apps/web must know the zone BEFORE it discovers on
 // it — the pre-flight recipe gate runs in between (zone-walk.ts's header).

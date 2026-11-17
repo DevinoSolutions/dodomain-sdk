@@ -82,6 +82,34 @@ Pass `appName` on the first `sessions.create` to name the test app: DoDomain's h
 page shows it next to a "Test app" chip, and it is never sent to a DNS provider until the app is
 claimed (until then the app is "DoDomain test app" everywhere else).
 
+#### Sandbox domains (no domain needed)
+
+No domain to test with yet? Use one of the reserved **sandbox** names. A sandbox session is
+simulated end to end: no DNS query, no provider call, and it is **never counted** against your
+keyless allowance or any plan (it has its own rate limit). The response says `mode: "sandbox"`,
+and its webhooks carry `sandbox: true`. Sandbox names work with a keyless client and with a
+secret key (`@dodomain/node` 0.10.0 or later):
+
+| Domain              | What happens                                                              |
+| ------------------- | ------------------------------------------------------------------------- |
+| `verified.test`     | verifies on the first check                                               |
+| `pending.test`      | never verifies (stays pending until the session expires)                  |
+| `slow.test`         | verifies about 20 seconds after the session was created                   |
+| `wrong-record.test` | every check finds the record with a wrong value                           |
+| `unsupported.test`  | detection finds no supported provider (manual records); verifies on check |
+
+```ts
+const sandbox = await dodomain.sessions.create({
+  domain: "verified.test",
+  records: [{ type: "CNAME", host: "app", value: "edge.yourproduct.com" }],
+});
+// sandbox.mode === "sandbox"
+```
+
+Only these exact lowercase names are sandbox names. Any other `.test` name is refused with
+`KEYLESS_PLACEHOLDER_DOMAIN` on a keyless client, and a lookalike (`verified.test.example.com`,
+`Verified.Test`) is a normal domain.
+
 `session.keyless.claimUrl` carries the key after its `#`. Hand it only to the person who will
 claim the app (your own UI or a direct message), never in a log, a commit, an issue or a public
 channel. `DoDomainError` bodies and `details` redact any `dd_ks_` key to `dd_ks_…`, so logging a
@@ -366,8 +394,8 @@ Verifies the `t=<unixMs>,v1=<hex hmac>` signature DoDomain sends with every webh
 
 ## Types
 
-`DnsRecordType` = `"A" | "AAAA" | "CNAME" | "TXT" | "MX"`.
-`DnsRecord` = `{ type, host, value, priority?, ttl? }`.
+`DnsRecordType` = `"A" | "AAAA" | "CNAME" | "TXT" | "MX" | "SRV" | "CAA" | "NS"` (NS below the zone apex only).
+`DnsRecord` = `{ type, host, value, priority?, ttl?, weight?, port?, flags?, tag? }`: MX needs `priority`; SRV needs `priority`, `weight`, `port` (its `value` is the target host); CAA needs `flags` and `tag` (`issue` | `issuewild` | `iodef`; its `value` is the property value).
 `Connection` = `{ id, appId, sessionId, domain, fqdn, recordFqdns, status, verifiedAt, lastCheckedAt, brokenAt, disconnectedAt, createdAt }`.
 `IntegratorSession` = `{ id, appId, domain, records, recipe, status, tier, detectedProvider, connectionId, createdAt, expiresAt, expired }`.
 `WebhookEndpoint` = `{ id, appId, url, createdAt, pausedAt }`; `WebhookEndpointWithSecret` adds the

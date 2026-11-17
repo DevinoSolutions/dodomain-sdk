@@ -13,7 +13,7 @@ Internal package (consumed by `apps/web`); not published on its own.
 | `discovery.ts`            | Domain Connect discovery → settings → template-support probe                                                                                |
 | `applyUrl.ts` / `sign.ts` | Build + sign the Domain Connect apply URL (synced/async flows)                                                                              |
 | `cloudflare/`             | Cloudflare OAuth (Tier 1): PKCE authorize → token exchange → DNS write → verify → delete                                                    |
-| `verify.ts`               | Verify a record against the domain's **authoritative** nameservers (A/AAAA/CNAME/TXT/MX)                                                    |
+| `verify.ts`               | Verify a record against the domain's **authoritative** nameservers (A/AAAA/CNAME/TXT/MX/SRV/CAA/NS)                                         |
 | `guides.ts`               | Per-provider guided-manual instructions — DNS deep link, host format, steps (top-5 + generic)                                               |
 | `records.ts`              | `fqdnFor`, `toExpectedRecords`, session record shapes (client-safe subpath)                                                                 |
 | `webhook.ts`              | `signWebhook` / `verifyWebhook` — HMAC-SHA256, Stripe-style `t=<ms>,v1=<hex>`, replay-tolerant                                              |

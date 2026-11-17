@@ -14,17 +14,26 @@
 // schema-parity.check.ts — covered by `pnpm typecheck`, which prepublishOnly
 // runs, so a schema change that drifts from this file fails the publish.
 
-/** DNS record types a connect session can carry. */
-export type DnsRecordType = "A" | "AAAA" | "CNAME" | "TXT" | "MX";
+/** DNS record types a connect session can carry. NS is accepted below the
+ * zone apex only (a subdomain delegation). */
+export type DnsRecordType = "A" | "AAAA" | "CNAME" | "TXT" | "MX" | "SRV" | "CAA" | "NS";
 
 /** One DNS record for the end user to create (pin: core zRecord). */
 export interface DnsRecord {
   type: DnsRecordType;
   host: string;
   value: string;
-  /** Required by the API for MX records. */
+  /** Required by the API for MX and SRV records. */
   priority?: number;
   ttl?: number;
+  /** SRV only, required (0-65535). For SRV, `value` is the target host. */
+  weight?: number;
+  /** SRV only, required (0-65535). */
+  port?: number;
+  /** CAA only, required (0-255). For CAA, `value` is the property value. */
+  flags?: number;
+  /** CAA only, required. */
+  tag?: "issue" | "issuewild" | "iodef";
 }
 
 /** Body for sessions.create (pin: core zCreateSessionInput). */
@@ -75,6 +84,12 @@ export interface ConnectSessionSummary {
   /** ISO 8601 datetime. */
   expiresAt: string;
   connectUrl: string;
+  /** `live` checks real DNS. `sandbox` is a session for one of the reserved
+   * sandbox names (`verified.test`, `pending.test`, `slow.test`,
+   * `wrong-record.test`, `unsupported.test`): simulated results, no DNS, never
+   * counted against a plan or keyless allowance. The server decides it from
+   * the domain; there is no flag to send. */
+  mode: "live" | "sandbox";
   /** The composed names this session will be verified at — one per requested
    * record, in the order they were sent. */
   records: ComposedDnsRecord[];
@@ -114,8 +129,6 @@ export interface KeylessSessionInfo {
 
 /** A session a keyless client created (pin: core zKeylessSessionResponse). */
 export type KeylessConnectSessionSummary = ConnectSessionSummary & {
-  /** A keyless session always checks real DNS. */
-  mode: "live";
   keyless: KeylessSessionInfo;
 };
 

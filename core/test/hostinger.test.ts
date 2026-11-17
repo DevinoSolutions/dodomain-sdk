@@ -11,7 +11,7 @@ import {
   HOSTINGER_REVOKE_URL,
   type HostingerApplyOutcome,
 } from "../src/hostinger.ts";
-import { RECORD_TYPES } from "../src/record-capabilities.ts";
+import { RECORD_TYPES, TIER_WRITABLE_TYPES } from "../src/record-capabilities.ts";
 import type { SessionRecord } from "../src/records.ts";
 import { detectProvider } from "../src/detect.ts";
 
@@ -87,11 +87,25 @@ test("zone mapping groups values, preserves TXT and MX priority, and always appe
     ],
   });
   assert.equal(hostingerZoneBody("customer.com", records).zone[0]!.name, "@");
-  for (const type of RECORD_TYPES) {
+  // Every type in Hostinger's row of the type x tier matrix appends...
+  for (const type of TIER_WRITABLE_TYPES.hostinger_oauth) {
     assert.equal(
       hostingerZoneBody("customer.com", [{ type, host: "www", value: "mock-value", priority: 10 }])
         .overwrite,
       false,
+    );
+  }
+  // ...and every accepted type outside it (SRV, CAA, NS) fails closed, so a
+  // session asking for one never reaches Hostinger's API half-written.
+  const outside = RECORD_TYPES.filter((t) => !TIER_WRITABLE_TYPES.hostinger_oauth.includes(t));
+  assert.ok(outside.length > 0);
+  for (const type of outside) {
+    assert.throws(
+      () =>
+        hostingerZoneBody("customer.com", [
+          { type, host: "www", value: "mock-value", priority: 10 },
+        ]),
+      (err: unknown) => err instanceof Error && (err as { stage?: string }).stage === "records",
     );
   }
 });

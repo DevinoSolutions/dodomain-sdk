@@ -6,7 +6,12 @@
 
 import { CF_API_BASE } from "./config.ts";
 import { describeField, readField } from "./upstream-json.ts";
-import { recordValueMatches, type RecordType } from "../record-capabilities.ts";
+import {
+  caaAnswer,
+  recordValueMatches,
+  srvAnswer,
+  type RecordType,
+} from "../record-capabilities.ts";
 
 export class CfDnsError extends Error {}
 export class CfZoneNotFoundError extends CfDnsError {}
@@ -106,6 +111,88 @@ export interface DnsRecordInput {
   proxied?: boolean;
   /** MX preference — Cloudflare REQUIRES this when type === "MX". */
   priority?: number;
+  /**
+   * The structured value Cloudflare models SRV and CAA with: sent INSTEAD of
+   * `content` (Cloudflare's create examples send `data` alone for both).
+   */
+  data?: CloudflareSrvData | CloudflareCaaData;
+}
+
+/** Cloudflare's SRV `data` object (its DNS records API, type SRV). */
+export interface CloudflareSrvData {
+  priority: number;
+  weight: number;
+  port: number;
+  target: string;
+}
+
+/** Cloudflare's CAA `data` object (its DNS records API, type CAA). */
+export interface CloudflareCaaData {
+  flags: number;
+  tag: string;
+  value: string;
+}
+
+/**
+ * The Cloudflare write body's value fields for one session record: `data` for
+ * SRV and CAA, `content` for every other type. The ONE place a session record
+ * (record-capabilities.ts: SRV `value` = target, CAA `value` = property value)
+ * is mapped onto Cloudflare's per-type shapes.
+ */
+export function cloudflareValueFields(rec: {
+  type: RecordType;
+  value: string;
+  priority?: number;
+  weight?: number;
+  port?: number;
+  flags?: number;
+  tag?: string;
+}): { content: string; data?: CloudflareSrvData | CloudflareCaaData; priority?: number } {
+  if (rec.type === "SRV") {
+    if (rec.priority === undefined || rec.weight === undefined || rec.port === undefined) {
+      throw new Error("Cloudflare SRV write: priority, weight and port are required");
+    }
+    return {
+      content: rec.value,
+      data: { priority: rec.priority, weight: rec.weight, port: rec.port, target: rec.value },
+    };
+  }
+  if (rec.type === "CAA") {
+    if (rec.flags === undefined || rec.tag === undefined) {
+      throw new Error("Cloudflare CAA write: flags and tag are required");
+    }
+    return { content: rec.value, data: { flags: rec.flags, tag: rec.tag, value: rec.value } };
+  }
+  return { content: rec.value, ...(rec.priority !== undefined ? { priority: rec.priority } : {}) };
+}
+
+/**
+ * One listed Cloudflare record as the answer string record-capabilities.ts
+ * compares: SRV and CAA in their composite spelling (`srvAnswer`/`caaAnswer`),
+ * read from `data` when Cloudflare returns it and otherwise from `content`
+ * (SRV `content` is "weight port target" with `priority` beside it; CAA
+ * `content` is already `flags tag "value"`). Every other type is `content`.
+ */
+export function cloudflareRecordAnswer(type: string, rec: ListedRecord): string {
+  if (type === "SRV") {
+    const d = rec.data as Partial<CloudflareSrvData> | undefined;
+    if (
+      d?.priority !== undefined &&
+      d.weight !== undefined &&
+      d.port !== undefined &&
+      d.target !== undefined
+    ) {
+      return srvAnswer({ priority: d.priority, weight: d.weight, port: d.port, target: d.target });
+    }
+    return `${rec.priority ?? ""} ${rec.content}`.trim();
+  }
+  if (type === "CAA") {
+    const d = rec.data as Partial<CloudflareCaaData> | undefined;
+    if (d?.flags !== undefined && d.tag !== undefined && d.value !== undefined) {
+      return caaAnswer({ flags: d.flags, tag: d.tag, value: d.value });
+    }
+  }
+  return rec.content;
 }
 
 export interface DnsRecord {
@@ -129,7 +216,8 @@ export async function createRecord(
     body: {
       type: rec.type,
       name: rec.name,
-      content: rec.content,
+      // SRV/CAA travel as Cloudflare's structured `data`, never as `content`.
+      ...(rec.data !== undefined ? { data: rec.data } : { content: rec.content }),
       ttl: rec.ttl ?? 120,
       proxied: rec.proxied ?? false,
       // FIX(F-002 hop 3): forward priority when present — Cloudflare requires
@@ -178,6 +266,8 @@ export interface ListedRecord {
   content: string;
   priority?: number;
   proxied?: boolean;
+  /** The structured value Cloudflare returns for SRV/CAA (and other data types). */
+  data?: Record<string, unknown>;
 }
 
 /**
@@ -254,8 +344,11 @@ export async function verifyRecordViaApi(
   // one Cloudflare happened to list first. `match` is true when ANY record's
   // value matches, mirroring verify.ts's DNS-path `.some()` semantics.
   const records = await listRecords(token, zoneId, type, name, fetchImpl);
+  // `expect` is the record's expected ANSWER (record-capabilities.ts
+  // expectedAnswerFor): the composite for SRV/CAA, so the listed record is
+  // spelled the same way before comparing.
   const matched = records.find((rec) =>
-    recordValueMatches(type, expect, rec.content, {
+    recordValueMatches(type, expect, cloudflareRecordAnswer(type, rec), {
       expectedPriority: expectPriority,
       actualPriority: rec.priority,
     }),
@@ -269,7 +362,7 @@ export async function verifyRecordViaApi(
     match: Boolean(matched),
     // The matched record's value when live; otherwise the first record's value
     // so a CONFLICT notice can show what actually disagrees (null when absent).
-    value: shown?.content ?? null,
+    value: shown ? cloudflareRecordAnswer(type, shown) : null,
     proxied: Boolean(shown?.proxied),
   };
 }

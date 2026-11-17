@@ -14,6 +14,7 @@ import {
   DigitalOceanError,
 } from "../src/digitalocean.ts";
 import { detectProvider } from "../src/detect.ts";
+import { RECORD_TYPES, TIER_WRITABLE_TYPES } from "../src/record-capabilities.ts";
 import type { SessionRecord } from "../src/records.ts";
 
 const config = {
@@ -193,12 +194,11 @@ test("record bodies use zone-relative names, raw unquoted TXT, absolute CNAME an
     ],
   );
   assert.equal(digitaloceanRecordBodies(input.domain, records, "customer.com")[0]!.name, "app");
-  for (const type of ["SRV", "CAA", "NS"]) {
+  for (const type of RECORD_TYPES.filter(
+    (t) => !TIER_WRITABLE_TYPES.digitalocean_oauth.includes(t),
+  )) {
     assert.throws(
-      () =>
-        digitaloceanRecordBodies(input.domain, [
-          { type: type as SessionRecord["type"], host: "@", value: "mock" },
-        ]),
+      () => digitaloceanRecordBodies(input.domain, [{ type, host: "@", value: "mock" }]),
       /records failed/,
     );
   }

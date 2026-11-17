@@ -32,6 +32,7 @@ const VALID_RESPONSE = {
   token: "dd_sess_abc",
   expiresAt: new Date().toISOString(),
   connectUrl: "https://connect.dodomain.io/connect/dd_sess_abc",
+  mode: "live" as const,
   // F3: the composed fqdn the server always returns for each requested record.
   records: [{ type: "CNAME" as const, host: "app", fqdn: "app.app.customer.com" }],
 };

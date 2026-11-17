@@ -11,7 +11,7 @@ import { apexOf } from "./apex.ts";
 import { emailPolicyKindOf } from "./email-records.ts";
 import {
   allowsCoexistingValues,
-  isDigitalOceanWritable,
+  tierCanWrite,
   recordValueMatches,
   requiresPriority,
 } from "./record-capabilities.ts";
@@ -144,7 +144,7 @@ export function digitaloceanRecordBodies(
   const parsed = zRecords.min(1).safeParse(records);
   if (!parsed.success) throw new DigitalOceanError("records");
   return parsed.data.map((record) => {
-    if (!isDigitalOceanWritable(record.type)) throw new DigitalOceanError("records");
+    if (!tierCanWrite("digitalocean_oauth", record.type)) throw new DigitalOceanError("records");
     const fqdn = domainToASCII(fqdnFor(record.host, normalized)).toLowerCase();
     if (!fqdn || (fqdn !== zone && !fqdn.endsWith(`.${zone}`)))
       throw new DigitalOceanError("records");

@@ -13,6 +13,7 @@
     "./digitalocean": "./src/digitalocean.ts",
     "./ovh": "./src/ovh.ts",
     "./ovh-region": "./src/ovh-region.ts",
+    "./dynadot": "./src/dynadot.ts",
     "./porkbun": "./src/porkbun.ts",
     "./spaceship": "./src/spaceship.ts",
     "./records": "./src/records.ts",

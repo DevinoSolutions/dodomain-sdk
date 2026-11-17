@@ -4,7 +4,7 @@
 import { z } from "./zod-runtime.ts";
 
 import type { ExpectedRecord } from "./verify-types.ts";
-import { isRecordType, RECORD_TYPES } from "./record-capabilities.ts";
+import { CAA_TAGS, expectedAnswerFor, isRecordType, RECORD_TYPES } from "./record-capabilities.ts";
 
 // Re-exported so `@dodomain/core/records` (the client-safe subpath) is the one
 // place both the record helpers AND the record-type capability source are
@@ -19,7 +19,7 @@ export * from "./record-diff.ts";
 // lookup-limit advisory next to a verified record.
 export * from "./email-records.ts";
 
-// F-008: the ONE zod schema for the record SHAPE (the 5-type enum + fields) —
+// F-008: the ONE zod schema for the record SHAPE (the RECORD_TYPES enum + fields) —
 // replaces the 3 independently hand-copied shapes the finding named (this
 // package's own SessionRecord interface, apps/web's RecordSchema, the node
 // SDK's DnsRecord). `type` is derived from RECORD_TYPES (not a re-typed
@@ -33,8 +33,17 @@ export const zRecord = z.object({
   type: z.enum(RECORD_TYPES),
   host: z.string().min(1),
   value: z.string().min(1),
+  /** MX preference or SRV priority (record-capabilities.ts requiresPriority). */
   priority: z.number().int().optional(),
   ttl: z.number().int().optional(),
+  /** SRV only (RFC 2782): `value` is the target host. */
+  weight: z.number().int().min(0).max(65535).optional(),
+  /** SRV only (RFC 2782). */
+  port: z.number().int().min(0).max(65535).optional(),
+  /** CAA only (RFC 8659): the flags byte, 0 or 128 (issuer critical) in practice. */
+  flags: z.number().int().min(0).max(255).optional(),
+  /** CAA only: the property tag; `value` is the property value. */
+  tag: z.enum(CAA_TAGS).optional(),
 });
 
 export const zRecords = z.array(zRecord);
@@ -176,7 +185,9 @@ export function toExpectedRecords(records: SessionRecord[], domain: string): Exp
     .map((r) => ({
       type: r.type,
       fqdn: fqdnFor(r.host, domain),
-      expect: r.value,
+      // SRV/CAA verify against their composite answer (record-capabilities.ts
+      // expectedAnswerFor), so weight/port/flags/tag are compared, not dropped.
+      expect: expectedAnswerFor(r),
       ...(r.priority !== undefined ? { priority: r.priority } : {}),
     }));
 }

@@ -17,7 +17,12 @@ import {
   spfmIndirectionHost,
   spfRecordSatisfiesThrough,
 } from "./email-records.ts";
-import { recordAnswerMatches, type LookupRecordType } from "./record-capabilities.ts";
+import {
+  caaAnswer,
+  recordAnswerMatches,
+  srvAnswer,
+  type LookupRecordType,
+} from "./record-capabilities.ts";
 import type { ExpectedRecord, VerificationResult } from "./verify-types.ts";
 import { defaultParentNs, nearestZoneCut, zoneNameServers, type ZoneNsDeps } from "./zone-walk.ts";
 
@@ -54,6 +59,15 @@ export interface DnsResolver {
    * RFC 8659 §4.2's "critical unknown tag ⇒ must not issue" clause.
    */
   resolveCaa(host: string): Promise<CaaAnswer[]>;
+  /**
+   * SRV (RFC 2782), read by record verification and the DNS tools. Optional so
+   * the existing injected fakes stay valid; an injected resolver WITHOUT it
+   * makes an SRV lookup an `error` (indeterminate), never `absent` or a match.
+   * node:dns's Resolver always has it.
+   */
+  resolveSrv?(
+    host: string,
+  ): Promise<Array<{ priority: number; weight: number; port: number; name: string }>>;
 }
 
 /** One CAA RR as `node:dns` reports it: the flag byte plus the tag it carried, keyed by tag name. */
@@ -269,15 +283,35 @@ export async function lookupRecordAnswers(
     if (type === "CNAME") records = await resolver.resolveCname(fqdn);
     else if (type === "A") records = await resolver.resolve4(fqdn);
     else if (type === "AAAA") records = await resolver.resolve6(fqdn);
-    else if (type === "NS") records = await resolver.resolveNs(fqdn);
-    else if (type === "CAA") {
+    else if (type === "NS") {
+      // A below-apex NS record is a DELEGATION, and node:dns cannot read the
+      // parent's side of one: asked directly, the parent's servers answer with
+      // a referral (NS in the AUTHORITY section), which c-ares parses as
+      // ENODATA (measured 2026-10-29 against a.gtld-servers.net for an NS
+      // query on google.com). So verification reads the delegation as it
+      // resolves: once it exists, the zone walk (owningZoneOf) places a cut AT
+      // this name and the delegated servers' own NS answer is what is compared;
+      // before it exists the parent answers NODATA (absent). A lame delegation
+      // (delegated servers not serving the zone) errors (indeterminate). No
+      // path reads a match without the delegated servers confirming it.
+      records = await resolver.resolveNs(fqdn);
+    } else if (type === "SRV") {
+      if (!resolver.resolveSrv) {
+        throw Object.assign(new Error("resolver has no resolveSrv"), {
+          code: "ESRVUNSUPPORTED",
+        });
+      }
+      const srv = await resolver.resolveSrv(fqdn);
+      records = srv.map((s) =>
+        srvAnswer({ priority: s.priority, weight: s.weight, port: s.port, target: s.name }),
+      );
+    } else if (type === "CAA") {
       const caa = await resolver.resolveCaa(fqdn);
       records = caa.flatMap((answer) =>
-        CAA_VALUE_TAGS.flatMap((tag) =>
-          answer[tag] === undefined
-            ? []
-            : [`${answer.critical} ${tag} ${JSON.stringify(answer[tag])}`],
-        ),
+        CAA_VALUE_TAGS.flatMap((tag) => {
+          const value = answer[tag];
+          return value === undefined ? [] : [caaAnswer({ flags: answer.critical, tag, value })];
+        }),
       );
     } else if (type === "MX") {
       const mx = await resolver.resolveMx(fqdn);
@@ -545,6 +579,7 @@ export async function verifyRecords(
     resolveMx: (host) => resolver.resolveMx(host),
     resolveTxt: (host) => resolver.resolveTxt(host),
     resolveCaa: (host) => resolver.resolveCaa(host),
+    ...(resolver.resolveSrv ? { resolveSrv: (host: string) => resolver.resolveSrv!(host) } : {}),
   };
 
   const zones = await Promise.all(recs.map((rec) => owningZoneOf(rec.fqdn, walkResolver)));

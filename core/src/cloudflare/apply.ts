@@ -38,14 +38,18 @@
 // it would not write. See the "SPF merge" regressions in test/apply.test.ts.
 
 import { fqdnFor, type SessionRecord } from "../records.ts";
+import { isNsAtZoneApex } from "../apex.ts";
 import {
   allowsCoexistingValues,
+  expectedAnswerFor,
   isTier1Writable,
   recordValueMatches,
   type RecordType,
 } from "../record-capabilities.ts";
 import { emailPolicyKindOf, mergeSpfRecordTerms } from "../email-records.ts";
 import {
+  cloudflareRecordAnswer,
+  cloudflareValueFields,
   listRecords,
   createRecord,
   updateRecordContent,
@@ -115,7 +119,10 @@ export async function applySessionRecords(
   for (const rec of records) {
     const fqdn = fqdnFor(rec.host, ctx.domain);
 
-    if (!isTier1Writable(rec.type)) {
+    // An apex NS is never written (apex.ts isNsAtZoneApex): it is refused at
+    // session creation, and refused again here so no writer can replace the
+    // domain's own delegation.
+    if (!isTier1Writable(rec.type) || (rec.type === "NS" && isNsAtZoneApex(fqdn))) {
       // Defense-in-depth only: sessions/route.ts already rejects non-writable
       // types at creation (F-002 step 6). If one somehow reaches here, mark it
       // loudly not-live instead of silently dropping it from `results` — the
@@ -160,9 +167,13 @@ export async function applySessionRecords(
     //     read-back below then reports present:true/match:false, which is how
     //     apply already surfaces a record it would not write, so cf/callback
     //     raises its CONFLICT notice naming the fqdn and the user consolidates.
+    // The record's expected ANSWER: the composite for SRV/CAA, `value` otherwise
+    // (record-capabilities.ts expectedAnswerFor) — the same string verify.ts
+    // checks DNS against, so the write decision and the read-back agree.
+    const expected = expectedAnswerFor(rec);
     const existing = await listRecordsFn(ctx.token, ctx.zoneId, rec.type, fqdn);
     const alreadyMatching = existing.some((r) =>
-      recordValueMatches(rec.type, rec.value, r.content, {
+      recordValueMatches(rec.type, expected, cloudflareRecordAnswer(rec.type, r), {
         expectedPriority: rec.priority,
         actualPriority: r.priority,
       }),
@@ -194,13 +205,13 @@ export async function applySessionRecords(
         existingSpf.length === 0 &&
         (existing.length === 0 || allowsCoexistingValues(rec.type))
       ) {
+        // content/priority, or SRV/CAA's structured `data` (cloudflare/dns.ts).
         const input: DnsRecordInput = {
           type: rec.type,
           name: fqdn,
-          content: rec.value,
           proxied: false,
+          ...cloudflareValueFields(rec),
         };
-        if (rec.priority !== undefined) input.priority = rec.priority;
         await createRecordFn(ctx.token, ctx.zoneId, input);
       }
     }
@@ -213,7 +224,7 @@ export async function applySessionRecords(
       ctx.zoneId,
       rec.type,
       fqdn,
-      rec.value,
+      expected,
       rec.priority,
     );
     results.push({

@@ -30,6 +30,7 @@ import {
   type DomainConnectTemplateRecordShape,
 } from "./domain-connect-templates.ts";
 import { parseSpfRecord, spfSoleIncludeHost } from "./email-records.ts";
+import { typesTierCannotWrite } from "./record-capabilities.ts";
 
 export const VERIFY_PREFIX = "dodomain-verify=";
 
@@ -433,6 +434,19 @@ export function compileToRecipe(records: SimpleRecord[], providerId: string): Co
   if (records.length === 0) {
     throw new RecipeError(
       "Domain Connect needs at least one record to apply; this session has none.",
+    );
+  }
+  // The tier's row of the type x tier matrix (record-capabilities.ts): a type
+  // no template may carry can never match one, and is refused by name so the
+  // start route and the detect probe say why one-click is not offered.
+  const unwritable = typesTierCannotWrite(
+    "domain_connect",
+    records.map((r) => ({ type: r.type.toUpperCase() })),
+  );
+  if (unwritable.length > 0) {
+    throw new RecipeError(
+      `Domain Connect templates cannot carry ${unwritable.join(", ")} records; ` +
+        `use the OAuth/API or manual fallback.`,
     );
   }
 

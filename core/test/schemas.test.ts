@@ -53,7 +53,7 @@ test("zRecord accepts every RECORD_TYPES member with optional priority/ttl", () 
 });
 
 test("zRecord rejects an unknown type and a missing host", () => {
-  assert.equal(zRecord.safeParse({ type: "NS", host: "@", value: "x" }).success, false);
+  assert.equal(zRecord.safeParse({ type: "ALIAS", host: "@", value: "x" }).success, false);
   assert.equal(zRecord.safeParse({ type: "TXT", value: "x" }).success, false);
   assert.equal(zRecord.safeParse({ type: "TXT", host: "", value: "x" }).success, false);
 });
@@ -233,6 +233,7 @@ test("zCreateSessionResponse accepts the exact POST /sessions server payload", (
     token: "dd_sess_abc",
     expiresAt: new Date().toISOString(),
     connectUrl: "https://connect.dodomain.io/connect/dd_sess_abc",
+    mode: "live",
     records: [{ type: "CNAME", host: "app", fqdn: "app.acme.com" }],
   };
   assert.deepEqual(zCreateSessionResponse.parse(payload), payload);
@@ -261,6 +262,7 @@ test("zCreateSessionResponse carries optional warnings, and a warning names the 
     token: "dd_sess_abc",
     expiresAt: new Date().toISOString(),
     connectUrl: "https://connect.dodomain.io/connect/dd_sess_abc",
+    mode: "live",
     records: [{ type: "CNAME", host: "links", fqdn: "links.links.acme.com" }],
     warnings: [
       {
