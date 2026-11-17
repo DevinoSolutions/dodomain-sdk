@@ -3,3 +3,14 @@ packages:
   - "connect"
   - "node"
   - "react"
+
+# pnpm audit names a workspace project by its folder, and this mirror's folders are
+# bare package words: `react` (@dodomain/react) and `connect` (@dodomain/connect). The
+# registry then matches them against the npm packages `react` and `connect` at OUR
+# versions (0.1.x, 0.3.x) and reports their 2014-era advisories, which fails the audit
+# on code that is not installed anywhere (real react is 19.x here). Ignore exactly the
+# high one that trips --audit-level high, by id; the low/moderate connect ones stay
+# visible in the report. Re-check this list when the folders or versions change.
+auditConfig:
+  ignoreGhsas:
+    - GHSA-hg79-j56m-fxgv

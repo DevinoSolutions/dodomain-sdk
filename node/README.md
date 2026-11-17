@@ -63,7 +63,9 @@ import { DoDomain } from "@dodomain/node";
 const dodomain = new DoDomain({ keyless: true, keylessKey: process.env.DODOMAIN_KEYLESS_KEY });
 
 const session = await dodomain.sessions.create({
-  domain: "customer.com",
+  // Change this to a domain whose DNS you control: a keyless call refuses a placeholder or
+  // reserved domain (customer.com, YOUR-DOMAIN.example) with 400 KEYLESS_PLACEHOLDER_DOMAIN.
+  domain: "YOUR-DOMAIN.example",
   records: [{ type: "CNAME", host: "app", value: "edge.yourproduct.com" }],
 });
 // session.connectUrl: open it, add the records, watch it verify.
